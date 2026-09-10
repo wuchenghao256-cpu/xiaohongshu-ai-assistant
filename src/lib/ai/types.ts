@@ -13,6 +13,7 @@ export const generationFieldsSchema = z.object({
   style: z.enum(writingStyles),
   customStyle: z.string().trim().max(300).optional(),
   additionalInfo: z.string().trim().max(1500).optional(),
+  customInstructions: z.string().trim().max(1500).optional(),
 });
 
 export const generationInputSchema = generationFieldsSchema.extend({
@@ -29,7 +30,7 @@ export type XiaohongshuGenerationInput = z.infer<typeof generationInputSchema>;
 export const postVariantSchema = z.object({
   title: z.string().trim().min(1).max(120),
   body: z.string().trim().min(1).max(5000),
-  hashtags: z.array(z.string().trim().min(1).max(50)).min(3).max(10),
+  hashtags: z.array(z.string().trim().min(1).max(50)).min(5).max(10),
   angle: z.string().trim().min(1).max(300),
   reasoning_summary: z.string().trim().min(1).max(500),
 });
