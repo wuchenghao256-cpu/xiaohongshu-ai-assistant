@@ -9,4 +9,13 @@ export function formatDate(value: string) {
   }).format(new Date(value));
 }
 
-export const publishStatusLabels: Record<string, string> = { draft: "草稿", ready: "待发布", publishing: "发布中", published: "已发布", failed: "发布失败" };
+export const publishStatusLabels: Record<string, string> = {
+  draft: "草稿",
+  ready: "待发布",
+  queued: "排队中",
+  publishing: "发布中",
+  published: "已发布",
+  failed: "发布失败",
+  manual_required: "需要人工确认",
+  connection_required: "需要连接账号",
+};

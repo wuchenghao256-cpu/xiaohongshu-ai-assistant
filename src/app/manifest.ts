@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "小红书 AI 内容助手",
-    short_name: "内容助手",
-    description: "面向个人创作者的小红书 AI 内容工作台",
+    name: "AI 多平台内容生成与聚合发布中心",
+    short_name: "内容发布中心",
+    description: "保留小红书内容生成能力，并以合规方式聚合多平台发布准备。",
     start_url: "/",
     scope: "/",
     display: "standalone",

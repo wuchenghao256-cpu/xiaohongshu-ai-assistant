@@ -10,13 +10,13 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "小红书内容助手",
-  description: "面向个人创作者的小红书 AI 内容工作台",
-  applicationName: "小红书 AI 内容助手",
+  title: "AI 内容发布中心",
+  description: "AI 多平台内容生成与聚合发布中心",
+  applicationName: "AI 内容发布中心",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "内容助手",
+    title: "内容发布中心",
     statusBarStyle: "default",
   },
   icons: {

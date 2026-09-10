@@ -1,8 +1,8 @@
-# 小红书 AI 内容助手 MVP
+# AI 多平台内容生成与聚合发布中心
 
-面向单用户的中文内容工作台。支持 Supabase 登录、商品图片直传、OpenAI-compatible AI 生成 3 个结构化版本、人工编辑与保存、历史记录、复制和人工发布准备。
+面向单用户的中文内容工作台。完整保留原小红书 AI 内容助手的 Supabase 登录、商品图片直传、文案与图片生成、人工编辑、历史记录和发布准备能力，并新增合规的多平台聚合发布中心。
 
-当前版本不会自动操作小红书，也不会绕过验证码、风控或平台审核。`XiaohongshuPublisher` 当前使用人工发布 Provider；界面会明确提示“当前版本需要人工确认发布”。
+当前版本不会自动操作小红书或微信，不抓取 Cookie，不调用私有 API，也不会绕过验证码、风控或平台审核。小红书与微信朋友圈使用人工交接 Provider；抖音与微博只预留官方 API/OAuth 扩展点，没有凭证时不会伪造发布成功。
 
 ## 技术栈
 
@@ -40,7 +40,7 @@ npx supabase db push
 4. 在 Authentication → Users 创建唯一使用者。应用第一版不开放注册入口。
 5. 确认 Email/Password 登录已启用。
 
-Migration 会创建：`profiles`、`projects`、`content_tasks`、`posts`、`post_variants`、`assets`、`ai_generations`、`publishing_jobs`，以及私有 `product-assets` bucket。所有公开 schema 业务表都启用 RLS，并按 `auth.uid() = user_id` 隔离。Storage 对象路径固定为 `用户ID/随机UUID.扩展名`。
+Migration 会创建：`profiles`、`projects`、`content_tasks`、`posts`、`post_variants`、`assets`、`ai_generations`、`publishing_jobs`、`connected_accounts`、`platform_variants`，以及私有 `product-assets` bucket。所有公开 schema 业务表都启用 RLS，并按 `auth.uid() = user_id` 隔离。`connected_accounts` 的 token 密文列不授予 authenticated 客户端读取权限。Storage 对象路径固定为 `用户ID/随机UUID.扩展名`。
 
 `SUPABASE_SERVICE_ROLE_KEY` 仅预留给未来受控服务端维护任务，当前用户流程不使用它，绝不能添加 `NEXT_PUBLIC_` 前缀。
 
@@ -77,11 +77,17 @@ API Key 只在 `src/lib/ai/client.ts` 的服务端模块读取，该模块使用
 抽象位于：
 
 - `src/lib/publishing/provider.ts`
+- `src/lib/publishing/registry.ts`
 - `src/lib/publishing/xiaohongshu-publisher.ts`
+- `src/lib/publishing/douyin-publisher.ts`
+- `src/lib/publishing/weibo-publisher.ts`
+- `src/lib/publishing/wechat-moments-publisher.ts`
 
-当前 Provider 只把内容置为 `ready` 并保存 `publishing_jobs`，不声称已经发布。未来如获得小红书官方授权分享 SDK/API，可新增 Provider 并替换 `getPublishingProvider()`，无需改动生成模块。
+`/publishing` 按 capability 渲染四个平台，并为每个平台创建独立任务。小红书和微信朋友圈返回 `manual_required`；未连接的抖音和微博返回 `connection_required`。当前没有任何 Provider 返回模拟 `published`。未来获得正式权限后只替换对应 Provider，无需把平台逻辑写进 React 页面。
 
-状态：`draft`、`ready`、`publishing`、`published`、`failed`。
+状态：`draft`、`ready`、`queued`、`publishing`、`published`、`failed`、`manual_required`、`connection_required`。
+
+内容详情和发布中心都提供“一键下载全部图片”。服务端只读取当前用户、当前 post 中 `selected_for_publishing = true` 的图片，并动态返回单个 `post-images.zip`，避免 iOS Safari 多文件下载限制。
 
 图像生成预留接口位于 `src/lib/images/provider.ts`，第一版未启用 AI 生图。
 

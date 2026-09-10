@@ -1,5 +1,5 @@
 import { jsonError } from "@/lib/http";
-import { getPublishingProvider } from "@/lib/publishing/xiaohongshu-publisher";
+import { getPublishingProvider } from "@/lib/publishing/registry";
 import { requireUser } from "@/lib/supabase/auth";
 
 export async function POST(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -38,17 +38,23 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       if (signed.error) throw signed.error;
       return signed.data.signedUrl;
     }));
-    const provider = getPublishingProvider();
-    const result = await provider.publishPost({
+    const provider = getPublishingProvider("xiaohongshu");
+    const result = await provider.publish({
       postId: id,
       title: post.data.title,
       body: post.data.body,
       hashtags: post.data.hashtags,
       imageUrls,
     });
-    const update = await supabase.from("posts").update({ publish_status: result.status }).eq("id", id).select("*").single();
+    const update = await supabase.from("posts").update({ publish_status: "ready" }).eq("id", id).select("*").single();
     if (update.error) throw update.error;
-    const job = await supabase.from("publishing_jobs").insert({ user_id: user.id, post_id: id, provider: provider.id, status: result.status }).select("id").single();
+    const job = await supabase.from("publishing_jobs").insert({
+      user_id: user.id,
+      post_id: id,
+      platform: provider.platform,
+      provider: provider.id,
+      status: result.status,
+    }).select("id").single();
     if (job.error) throw job.error;
     return Response.json({
       post: update.data,

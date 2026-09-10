@@ -1,23 +1,62 @@
-export const publishingStatuses = ["draft", "ready", "publishing", "published", "failed"] as const;
+export const platforms = ["xiaohongshu", "douyin", "weibo", "wechat_moments"] as const;
+export type Platform = (typeof platforms)[number];
+
+export const publishingModes = ["official_api", "manual_handoff", "unavailable"] as const;
+export type PublishingMode = (typeof publishingModes)[number];
+
+export const publishingStatuses = [
+  "draft",
+  "ready",
+  "queued",
+  "publishing",
+  "published",
+  "failed",
+  "manual_required",
+  "connection_required",
+] as const;
 export type PublishingStatus = (typeof publishingStatuses)[number];
 
-export type PublishingPayload = {
+export type ConnectedAccountContext = {
+  id: string;
+  status: "connected" | "expired" | "revoked" | "error";
+  expiresAt: string | null;
+};
+
+export type PublishingCapability = {
+  platform: Platform;
+  mode: PublishingMode;
+  connected: boolean;
+  canPublish: boolean;
+  reason: string;
+};
+
+export type PublishContent = {
   postId: string;
   title: string;
   body: string;
   hashtags: string[];
   imageUrls: string[];
+  platformVariant?: {
+    title?: string | null;
+    body?: string | null;
+    hashtags?: string[];
+    payload?: Record<string, unknown>;
+  };
 };
 
 export type PublishingResult = {
-  status: "ready";
-  code: "official_publishing_unavailable";
-  manualConfirmationRequired: true;
+  status: Extract<PublishingStatus, "published" | "failed" | "manual_required" | "connection_required">;
+  code: string;
+  manualConfirmationRequired: boolean;
+  externalPostId?: string;
+  errorMessage?: string;
 };
 
 export interface PublishingProvider {
+  readonly platform: Platform;
   readonly id: string;
   readonly displayName: string;
-  readonly supportsDirectPublish: boolean;
-  publishPost(payload: PublishingPayload): Promise<PublishingResult>;
+  getCapability(account?: ConnectedAccountContext): Promise<PublishingCapability>;
+  connect?(): Promise<void>;
+  publish(content: PublishContent, account?: ConnectedAccountContext): Promise<PublishingResult>;
 }
