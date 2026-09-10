@@ -51,6 +51,12 @@ export async function POST(request: Request) {
     }));
 
     const result = await provider.generateXiaohongshuPost(input, imageResults);
+    console.info("AI generation quality check", {
+      generationId,
+      correctionApplied: result.diagnostics.qualityCorrectionApplied,
+      initialIssues: result.diagnostics.initialQuality.issues,
+      finalIssues: result.diagnostics.finalQuality.issues,
+    });
     const variants = result.variants.map((variant, index) => ({
       user_id: user.id,
       task_id: input.taskId,

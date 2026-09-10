@@ -1,7 +1,8 @@
 import "server-only";
 import { getServerEnv } from "@/lib/env";
-import { AiProviderError, type AiImage, type AiProvider } from "@/lib/ai/provider";
-import { buildXhsUserPrompt, XHS_SYSTEM_PROMPT } from "@/lib/ai/prompts";
+import { AiProviderError, type AiGenerationResult, type AiImage, type AiProvider } from "@/lib/ai/provider";
+import { buildXhsQualityRepairPrompt, buildXhsUserPrompt, XHS_SYSTEM_PROMPT } from "@/lib/ai/prompts";
+import { inspectGenerationQuality } from "@/lib/ai/quality";
 import { generatedVariantsSchema, type AiHealth, type GeneratedVariants, type XiaohongshuGenerationInput } from "@/lib/ai/types";
 
 type ChatCompletionResponse = { choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }> };
@@ -81,11 +82,7 @@ class OpenAiCompatibleProvider implements AiProvider {
     }
   }
 
-  async generateXiaohongshuPost(input: XiaohongshuGenerationInput, images: AiImage[] = []) {
-    const text = buildXhsUserPrompt(input);
-    const userContent = images.length === 0
-      ? text
-      : [{ type: "text", text }, ...images.map((image) => ({ type: "image_url", image_url: { url: image.url } }))];
+  private async requestValidatedVariants(userContent: unknown, systemPrompt: string) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const retryInstruction = attempt === 0
         ? ""
@@ -95,7 +92,7 @@ class OpenAiCompatibleProvider implements AiProvider {
         temperature: 0.8,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: `${XHS_SYSTEM_PROMPT}${retryInstruction}` },
+          { role: "system", content: `${systemPrompt}${retryInstruction}` },
           { role: "user", content: userContent },
         ],
       }, 60_000);
@@ -107,6 +104,31 @@ class OpenAiCompatibleProvider implements AiProvider {
       }
     }
     throw new AiProviderError("AI 返回结构不符合要求，请重试。", "INVALID_RESPONSE", 502);
+  }
+
+  async generateXiaohongshuPost(input: XiaohongshuGenerationInput, images: AiImage[] = []): Promise<AiGenerationResult> {
+    const text = buildXhsUserPrompt(input);
+    const userContent = images.length === 0
+      ? text
+      : [{ type: "text", text }, ...images.map((image) => ({ type: "image_url", image_url: { url: image.url } }))];
+    const initial = await this.requestValidatedVariants(userContent, XHS_SYSTEM_PROMPT);
+    const initialQuality = inspectGenerationQuality(initial);
+    if (initialQuality.passes) {
+      return {
+        ...initial,
+        diagnostics: { qualityCorrectionApplied: false, initialQuality, finalQuality: initialQuality },
+      };
+    }
+
+    const corrected = await this.requestValidatedVariants(
+      buildXhsQualityRepairPrompt(input, initial, initialQuality.issues),
+      `${XHS_SYSTEM_PROMPT}\n\n这是一次质量修正。不得扩写或改变商品事实，只修正语气、Emoji、分段和自然程度。`,
+    );
+    const finalQuality = inspectGenerationQuality(corrected);
+    return {
+      ...corrected,
+      diagnostics: { qualityCorrectionApplied: true, initialQuality, finalQuality },
+    };
   }
 
   async healthCheck(): Promise<AiHealth> {

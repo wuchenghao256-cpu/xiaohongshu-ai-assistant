@@ -1,11 +1,20 @@
+import type { GenerationQualityReport } from "@/lib/ai/quality";
 import type { AiHealth, GeneratedVariants, XiaohongshuGenerationInput } from "@/lib/ai/types";
 
 export type AiImage = { url: string; mimeType: string };
 
+export type AiGenerationResult = GeneratedVariants & {
+  diagnostics: {
+    qualityCorrectionApplied: boolean;
+    initialQuality: GenerationQualityReport;
+    finalQuality: GenerationQualityReport;
+  };
+};
+
 export interface AiProvider {
   readonly name: string;
   readonly model: string;
-  generateXiaohongshuPost(input: XiaohongshuGenerationInput, images?: AiImage[]): Promise<GeneratedVariants>;
+  generateXiaohongshuPost(input: XiaohongshuGenerationInput, images?: AiImage[]): Promise<AiGenerationResult>;
   healthCheck(): Promise<AiHealth>;
 }
 
