@@ -69,13 +69,17 @@ export function AssetLibrary({ initialAssets }: { initialAssets: LibraryAsset[] 
   }
 
   async function toggleSelected(asset: LibraryAsset) {
+    // 乐观切换：按钮样式和文案由 asset.selected 派生，等响应回来才变的话，
+    // 慢请求时点下去等于没反应。失败时回滚。
     if (toggling) return;
+    const selected = !asset.selected;
     setToggling(asset.id);
+    setAssets((current) => current.map((item) => item.id === asset.id ? { ...item, selected } : item));
     try {
       const response = await fetch("/api/assets", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: asset.id, selected: !asset.selected }),
+        body: JSON.stringify({ id: asset.id, selected }),
       });
       const data = (await response.json()) as { asset?: { selected_for_publishing: boolean }; error?: string };
       if (!response.ok || !data.asset) throw new Error(data.error || "选择状态保存失败。");
@@ -83,6 +87,7 @@ export function AssetLibrary({ initialAssets }: { initialAssets: LibraryAsset[] 
         ? { ...item, selected: data.asset!.selected_for_publishing }
         : item));
     } catch (error) {
+      setAssets((current) => current.map((item) => item.id === asset.id ? { ...item, selected: asset.selected } : item));
       toast.error(error instanceof Error ? error.message : "选择状态保存失败。");
     } finally {
       setToggling(undefined);
@@ -146,7 +151,7 @@ export function AssetLibrary({ initialAssets }: { initialAssets: LibraryAsset[] 
                         ) : (
                           <CheckCircle2 data-icon="inline-start" />
                         )}
-                        {asset.selected ? "已选作发布图" : "选作发布图"}
+                        {asset.selected ? "已选作发布图" : toggling === asset.id ? "保存中…" : "选作发布图"}
                       </Button>
                       <Button
                         type="button"
@@ -161,7 +166,7 @@ export function AssetLibrary({ initialAssets }: { initialAssets: LibraryAsset[] 
                         ) : (
                           <Trash2 data-icon="inline-start" />
                         )}
-                        删除
+                        {deleting === asset.id ? "删除中…" : "删除"}
                       </Button>
                     </div>
                     <Button

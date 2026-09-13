@@ -61,6 +61,7 @@ export function VideoStudio({
   const [creating, setCreating] = useState(false);
   // 正在处理的任务操作，用于禁用按钮，避免连点产生两个付费任务。
   const [acting, setActing] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [duration, setDuration] = useState(10);
   const [orientation, setOrientation] = useState<"landscape" | "portrait">("portrait");
@@ -80,6 +81,20 @@ export function VideoStudio({
     const data = (await response.json()) as { jobs: VideoJob[] };
     setJobs(data.jobs);
   }, []);
+
+  /** 手动刷新：之前点击完全没有反馈，失败也不说话。 */
+  async function refreshManually() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshJobs();
+      toast.success("视频任务已刷新");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "刷新失败，请稍后重试");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refreshJobs(), 0);
@@ -188,8 +203,12 @@ export function VideoStudio({
         toast.error(data.error ?? "操作失败");
         return;
       }
+      // 之前 try/finally 没有 catch：网络错误或 JSON 解析失败会变成未捕获的
+      // rejection，用户既看不到错误也没有任何提示。
       toast.success(name === "save" ? "已保存到作品库" : "已创建重新生成任务");
       await refreshJobs();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "操作失败，请稍后重试");
     } finally {
       setActing(null);
     }
@@ -420,9 +439,9 @@ export function VideoStudio({
               <h2 className="font-semibold">视频任务</h2>
               <p className="text-sm text-muted-foreground">刷新页面后仍可恢复</p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => void refreshJobs()}>
-              <RefreshCw />
-              刷新
+            <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void refreshManually()}>
+              {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {refreshing ? "刷新中…" : "刷新"}
             </Button>
           </div>
           {jobs.length ? (
@@ -456,12 +475,12 @@ export function VideoStudio({
                   <div className="mt-4 flex gap-2">
                     <Button size="sm" variant="outline" disabled={acting !== null} onClick={() => void action(job, "regenerate")}>
                       {acting === `${job.id}:regenerate` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                      重新生成
+                      {acting === `${job.id}:regenerate` ? "处理中…" : "重新生成"}
                     </Button>
                     {job.status === "completed" && !job.saved ? (
                       <Button size="sm" disabled={acting !== null} onClick={() => void action(job, "save")}>
                         {acting === `${job.id}:save` ? <Loader2 className="animate-spin" /> : <Save />}
-                        保存到作品库
+                        {acting === `${job.id}:save` ? "保存中…" : "保存到作品库"}
                       </Button>
                     ) : null}
                   </div>

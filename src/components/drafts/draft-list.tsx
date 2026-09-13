@@ -196,9 +196,9 @@ export function DraftList({ initialDrafts }: { initialDrafts: DraftView[] }) {
                   <Button type="button" variant="outline" size="sm" onClick={() => setEditing(draft)}>
                     <Pencil data-icon="inline-start" />编辑文案
                   </Button>
-                  <Button type="button" size="sm" disabled={publishingId === draft.id} onClick={() => void publish(draft)}>
+                  <Button type="button" size="sm" disabled={Boolean(publishingId)} onClick={() => void publish(draft)}>
                     {publishingId === draft.id ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Send data-icon="inline-start" />}
-                    发布
+                    {publishingId === draft.id ? "发布中…" : "发布"}
                   </Button>
                   <Button nativeButton={false} variant="ghost" size="sm" render={<Link href={`/create?taskId=${draft.taskId}`} />}>
                     <ExternalLink data-icon="inline-start" />回到创作

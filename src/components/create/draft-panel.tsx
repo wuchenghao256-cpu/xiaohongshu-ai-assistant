@@ -128,6 +128,8 @@ export function DraftPanel({
         });
       }
       toast.success("内容已设为最终版本，正在跳转到发布中心…");
+      // 成功后不复位 publishing：真要靠 router.push 卸载组件，提前复位会让按钮
+      // 在跳转前闪回可点状态，用户可能再点一次发出第二个发布请求。
       router.push(`/publishing?postId=${data.postId}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "准备发布失败。");

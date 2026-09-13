@@ -68,8 +68,13 @@ const platformLabels: Record<Platform, string> = {
 };
 
 async function copyText(value: string, label: string) {
-  await navigator.clipboard.writeText(value);
-  toast.success(`${label}已复制`);
+  // 剪贴板写入会因权限或非安全上下文直接抛错，之前没有 catch，失败时毫无反馈。
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label}已复制`);
+  } catch {
+    toast.error("复制失败，请手动选择文本复制");
+  }
 }
 
 export function PublishingCenter({
@@ -216,7 +221,7 @@ export function PublishingCenter({
       <div><p className="text-sm font-medium">{post ? post.title : "尚未选择内容"}</p><p className="mt-0.5 text-xs text-muted-foreground">将为 {selectedPlatforms.length} 个平台分别创建任务，不会直接伪造发布成功。</p></div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button nativeButton={false} variant="outline" disabled={!post || !post.selectedImageCount} render={<a href={post ? `/api/posts/${post.id}/images.zip` : "#"} download="post-images.zip" />}><Download data-icon="inline-start" />一键下载全部图片 ZIP</Button>
-        <Button type="button" disabled={preparing || !post || !selectedPlatforms.length} onClick={preparePublishing}>{preparing ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Send data-icon="inline-start" />}准备发布</Button>
+        <Button type="button" disabled={preparing || !post || !selectedPlatforms.length} onClick={preparePublishing}>{preparing ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <Send data-icon="inline-start" />}{preparing ? "正在准备…" : "准备发布"}</Button>
       </div>
     </div>
 
