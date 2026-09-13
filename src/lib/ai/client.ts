@@ -1,5 +1,7 @@
 import "server-only";
 import { getServerEnv } from "@/lib/env";
+import { getEnabledProviderConfig } from "@/lib/providers/repository";
+import type { ProviderRuntimeConfig } from "@/lib/providers/types";
 import { AiProviderError, type AiGenerationResult, type AiImage, type AiProvider } from "@/lib/ai/provider";
 import { buildXhsQualityRepairPrompt, buildXhsUserPrompt, XHS_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { inspectGenerationQuality } from "@/lib/ai/quality";
@@ -44,7 +46,13 @@ class OpenAiCompatibleProvider implements AiProvider {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
-  constructor() {
+  constructor(config?: ProviderRuntimeConfig) {
+    if (config) {
+      this.baseUrl = config.baseUrl;
+      this.apiKey = config.apiKey;
+      this.model = config.model;
+      return;
+    }
     let env: ReturnType<typeof getServerEnv>;
     try { env = getServerEnv(); } catch {
       throw new AiProviderError("AI API 尚未配置，请在服务端环境变量中填写 AI_BASE_URL、AI_API_KEY 和 AI_MODEL。", "CONFIG_MISSING", 503);
@@ -138,10 +146,12 @@ class OpenAiCompatibleProvider implements AiProvider {
   }
 }
 
-export function getAiProvider(): AiProvider {
-  return new OpenAiCompatibleProvider();
+export async function getAiProvider(userId?: string): Promise<AiProvider> {
+  const config = userId ? await getEnabledProviderConfig(userId, "text") : null;
+  if (config?.provider === "google" || config?.provider === "seedream") throw new AiProviderError("当前文案生成仅支持 OpenAI-compatible Provider。", "CONFIG_MISSING", 400);
+  return new OpenAiCompatibleProvider(config ?? undefined);
 }
 
-export async function generateXiaohongshuPost(input: XiaohongshuGenerationInput, images: AiImage[] = []) {
-  return getAiProvider().generateXiaohongshuPost(input, images);
+export async function generateXiaohongshuPost(userId: string, input: XiaohongshuGenerationInput, images: AiImage[] = []) {
+  return (await getAiProvider(userId)).generateXiaohongshuPost(input, images);
 }

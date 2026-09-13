@@ -1,147 +1,26 @@
 import "server-only";
-import { z } from "zod";
+import { CustomImageProvider } from "@/lib/image-ai/adapters/custom-image-provider";
+import { GeminiImageProvider } from "@/lib/image-ai/adapters/gemini-image-provider";
+import { OpenAiImageProvider } from "@/lib/image-ai/adapters/openai-image-provider";
+import { SeedreamImageProvider } from "@/lib/image-ai/adapters/seedream-provider";
 import { getImageAiEnv } from "@/lib/env";
 import { ImageGenerationError, type ImageGenerationProvider } from "@/lib/image-ai/provider";
-import type { GeneratedImage, ImageAspectRatio, ImageGenerationInput } from "@/lib/image-ai/types";
+import type { ImageGenerationInput } from "@/lib/image-ai/types";
+import { getEnabledProviderConfig } from "@/lib/providers/repository";
+import type { ProviderRuntimeConfig } from "@/lib/providers/types";
 
-const imageResponseSchema = z.object({
-  data: z.array(z.object({
-    url: z.string().url().optional(),
-    b64_json: z.string().min(1).optional(),
-  }).refine((image) => Boolean(image.url || image.b64_json))).min(1),
-});
-
-const sizeByRatio: Record<ImageAspectRatio, string> = {
-  "1:1": "2048x2048",
-  "3:4": "1728x2304",
-  "4:5": "1728x2160",
-  "4:3": "2304x1728",
-  "9:16": "1440x2560",
-  "16:9": "2560x1440",
-};
-
-function imageEndpoint(baseUrl: string) {
-  const normalized = baseUrl.replace(/\/+$/, "");
-  return normalized.endsWith("/images/generations")
-    ? normalized
-    : `${normalized}/images/generations`;
+function fromConfig(config: ProviderRuntimeConfig): ImageGenerationProvider {
+  if (config.provider === "seedream") return new SeedreamImageProvider(config);
+  if (config.provider === "openai") return new OpenAiImageProvider(config);
+  if (config.provider === "google") return new GeminiImageProvider(config);
+  return new CustomImageProvider(config);
 }
 
-class VolcengineSeedreamProvider implements ImageGenerationProvider {
-  readonly name = "volcengine-seedream";
-  readonly model: string;
-  readonly qualityPreset = "high";
-  readonly maxOutputs = 4;
-  private readonly baseUrl: string;
-  private readonly apiKey: string;
-
-  constructor() {
-    try {
-      const env = getImageAiEnv();
-      this.baseUrl = env.IMAGE_AI_BASE_URL;
-      this.apiKey = env.IMAGE_AI_API_KEY;
-      this.model = env.IMAGE_AI_MODEL;
-    } catch {
-      throw new ImageGenerationError(
-        "图片 AI 尚未配置，请在服务端填写 IMAGE_AI_BASE_URL、IMAGE_AI_API_KEY 和 IMAGE_AI_MODEL。",
-        "CONFIG_MISSING",
-        503,
-      );
-    }
-  }
-
-  private async requestOne(input: ImageGenerationInput, index: number): Promise<GeneratedImage> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 150_000);
-    try {
-      const response = await fetch(imageEndpoint(this.baseUrl), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: this.model,
-          prompt: [
-            input.prompt,
-            input.negativePrompt ? `Avoid: ${input.negativePrompt}.` : "",
-            input.count > 1
-              ? `This is image ${index + 1} of ${input.count}. Vary only the composition details while keeping the same reference product and template direction.`
-              : "",
-          ].filter(Boolean).join("\n"),
-          ...(input.references.length
-            ? {
-                image: input.references.length === 1
-                  ? input.references[0].url
-                  : input.references.map((reference) => reference.url),
-              }
-            : {}),
-          size: sizeByRatio[input.aspectRatio],
-          sequential_image_generation: "disabled",
-          stream: false,
-          response_format: "url",
-          watermark: false,
-        }),
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        console.error("Image AI request failed", {
-          status: response.status,
-          provider: this.name,
-          model: this.model,
-        });
-        throw new ImageGenerationError(
-          `图片生成服务请求失败（HTTP ${response.status}），请检查模型、Endpoint ID 或账户额度。`,
-          "REQUEST_FAILED",
-          502,
-        );
-      }
-      const parsed = imageResponseSchema.safeParse(await response.json());
-      if (!parsed.success) {
-        throw new ImageGenerationError("图片生成服务返回了无法识别的结果。", "INVALID_RESPONSE", 502);
-      }
-      const image = parsed.data.data[0];
-      return { url: image.url, b64Json: image.b64_json };
-    } catch (error) {
-      if (error instanceof ImageGenerationError) throw error;
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new ImageGenerationError("图片生成超时，请稍后重试。", "TIMEOUT", 504);
-      }
-      console.error("Image AI transport failed", {
-        provider: this.name,
-        model: this.model,
-        error: error instanceof Error ? error.message : "unknown",
-      });
-      throw new ImageGenerationError("无法连接图片生成服务，请检查接口地址或网络。", "REQUEST_FAILED", 502);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  async generateProductImages(input: ImageGenerationInput) {
-    return Promise.all(
-      Array.from({ length: input.count }, (_, index) => this.requestOne(input, index)),
-    );
-  }
+function environmentFallback(): ImageGenerationProvider {
+  try { const env = getImageAiEnv(); return new SeedreamImageProvider({ provider: "seedream", baseUrl: env.IMAGE_AI_BASE_URL, apiKey: env.IMAGE_AI_API_KEY, model: env.IMAGE_AI_MODEL }); }
+  catch { throw new ImageGenerationError("图片 AI 尚未配置，请在设置中启用图片 Provider。", "CONFIG_MISSING", 503); }
 }
 
-export function getImageGenerationProvider(): ImageGenerationProvider {
-  return new VolcengineSeedreamProvider();
-}
-
-export function generateProductImages(input: ImageGenerationInput) {
-  return getImageGenerationProvider().generateProductImages(input);
-}
-
-export function generateModelProductImages(input: ImageGenerationInput) {
-  const provider = getImageGenerationProvider();
-  if (input.count > provider.maxOutputs) {
-    throw new ImageGenerationError(
-      `当前图片生成服务单次最多生成 ${provider.maxOutputs} 张图片。`,
-      "REQUEST_FAILED",
-      400,
-    );
-  }
-  return provider.generateProductImages(input);
-}
+export async function getImageGenerationProvider(userId: string) { const configured = await getEnabledProviderConfig(userId, "image"); return configured ? fromConfig(configured) : environmentFallback(); }
+export async function generateProductImages(userId: string, input: ImageGenerationInput) { return (await getImageGenerationProvider(userId)).generateProductImages(input); }
+export async function generateModelProductImages(userId: string, input: ImageGenerationInput) { const provider = await getImageGenerationProvider(userId); if (input.count > provider.maxOutputs) throw new ImageGenerationError(`当前图片生成服务单次最多生成 ${provider.maxOutputs} 张图片。`, "REQUEST_FAILED", 400); return provider.generateProductImages(input); }

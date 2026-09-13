@@ -8,6 +8,7 @@ const serverEnvSchema = z.object({
   AI_BASE_URL: z.string().url(),
   AI_API_KEY: z.string().min(1),
   AI_MODEL: z.string().min(1),
+  PROVIDER_CONFIG_ENCRYPTION_KEY: z.string().min(43).optional(),
 });
 
 const imageAiEnvSchema = z.object({
@@ -28,6 +29,16 @@ export function getServerEnv(): ServerEnv {
     throw new Error(`服务器配置不完整：${fields}`);
   }
   return parsed.data;
+}
+
+export function getProviderEncryptionKey() {
+  const value = process.env.PROVIDER_CONFIG_ENCRYPTION_KEY;
+  if (!value) throw new Error("PROVIDER_CONFIG_ENCRYPTION_KEY_NOT_CONFIGURED");
+  return value;
+}
+
+export function hasProviderEncryptionKey() {
+  return Boolean(process.env.PROVIDER_CONFIG_ENCRYPTION_KEY);
 }
 
 export function getSupabasePublicEnv() {

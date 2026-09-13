@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const input = generationInputSchema.parse(await request.json());
     taskId = input.taskId;
     const { user, supabase } = await requireUser();
-    const provider = getAiProvider();
+    const provider = await getAiProvider(user.id);
     const taskUpdate = await supabase.from("content_tasks").update({
       product_name: input.productName,
       category: input.category,

@@ -131,12 +131,15 @@ export function AiImageGenerator({
     </CardHeader>
     <CardContent className="grid min-w-0 gap-4">
       <Field>
-        <FieldLabel htmlFor="model-image-template">模板选择</FieldLabel>
-        <Select value={templateId} onValueChange={applyTemplate}>
-          <SelectTrigger id="model-image-template" className="w-full min-w-0"><SelectValue>{selectedTemplate.name}</SelectValue></SelectTrigger>
-          <SelectContent>{modelImageTemplates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">选择模板后会自动回填模特、风格、比例和默认生成张数。</p>
+        <FieldLabel>Template selector</FieldLabel>
+        <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3" role="radiogroup" aria-label="图片模板">
+          {modelImageTemplates.map((template, index) => <button key={template.id} type="button" role="radio" aria-checked={template.id === templateId} onClick={() => applyTemplate(template.id)} className={template.id === templateId ? "template-card border-foreground" : "template-card border-border"}>
+            <span className="template-thumbnail" aria-hidden="true"><span className={index % 2 ? "template-figure-left" : "template-figure-right"} /></span>
+            <span className="block truncate text-xs font-medium">{template.name}</span>
+            <span className="mt-1 block text-[11px] text-muted-foreground">{modelGenderLabels[template.gender]} · {template.scene} · {modelStyleLabels[template.style]}</span>
+          </button>)}
+        </div>
+        <p className="text-xs text-muted-foreground">已选：{selectedTemplate.name}。模板会回填模特、风格、比例与默认张数。</p>
       </Field>
 
       <div className="grid min-w-0 gap-4 sm:grid-cols-2">

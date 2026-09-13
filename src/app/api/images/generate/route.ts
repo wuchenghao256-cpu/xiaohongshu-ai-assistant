@@ -138,7 +138,7 @@ export async function POST(request: Request) {
         generationMode: input.generationMode,
         referenceCount: references.length,
       });
-      generated = await generateModelProductImages({
+      generated = await generateModelProductImages(user.id, {
         prompt: prompt.positivePrompt,
         negativePrompt: prompt.negativePrompt,
         aspectRatio: input.aspectRatio,
@@ -154,7 +154,7 @@ export async function POST(request: Request) {
         imageStyle: input.imageStyle,
         hasReference: references.length > 0,
       });
-      generated = await generateProductImages({
+      generated = await generateProductImages(user.id, {
         prompt,
         aspectRatio: input.aspectRatio,
         count: input.count,

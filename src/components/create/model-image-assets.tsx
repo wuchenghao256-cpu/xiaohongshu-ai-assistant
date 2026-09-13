@@ -99,10 +99,10 @@ export function GeneratedImagesPanel({
 
     {assets.length ? <ImagePreviewGallery images={assets.map((asset) => ({ id: asset.id, src: asset.preview, alt: asset.name }))}>{({ openPreview }) => <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{assets.map((asset, index) => {
       const selected = selectedAssetIds.includes(asset.id);
-      return <div key={asset.id} className={cn("relative aspect-square min-w-0 overflow-hidden rounded-lg border", selected && "border-primary/50 ring-1 ring-primary/20")}>
+      return <div key={asset.id} className={cn("group/image relative aspect-square min-w-0 overflow-hidden rounded-lg border", selected && "border-primary/50 ring-1 ring-primary/20")}>
         <ImagePreviewTrigger image={{ id: asset.id, src: asset.preview, alt: asset.name }} onOpen={() => openPreview(index)} sizes="120px" imageClassName={selected ? undefined : "opacity-55"} />
-        <Button type="button" variant="destructive" size="icon-xs" className="absolute right-1 top-1 opacity-90" onClick={() => void onDelete(asset)} aria-label={`删除生成图 ${asset.name}`}><Trash2 /></Button>
-        <button type="button" aria-pressed={selected} onClick={() => void onToggle(asset.id)} className="absolute inset-x-1 bottom-1 flex items-center justify-center gap-1 rounded-md bg-background/90 px-1 py-1 text-[11px] font-medium shadow-sm">
+        <Button type="button" variant="destructive" size="icon-xs" className="absolute right-1 top-1 opacity-90 transition-opacity sm:opacity-0 sm:group-hover/image:opacity-90 sm:group-focus-within/image:opacity-90" onClick={() => void onDelete(asset)} aria-label={`删除生成图 ${asset.name}`}><Trash2 /></Button>
+        <button type="button" aria-pressed={selected} onClick={() => void onToggle(asset.id)} className="absolute inset-x-1 bottom-1 flex min-h-9 items-center justify-center gap-1 rounded-md bg-background/90 px-1 py-1 text-[11px] font-medium shadow-sm transition-opacity sm:opacity-0 sm:group-hover/image:opacity-100 sm:group-focus-within/image:opacity-100">
           <CheckCircle2 className="size-3" />{selected ? "已选作发布图" : "选作发布图"}
         </button>
       </div>;

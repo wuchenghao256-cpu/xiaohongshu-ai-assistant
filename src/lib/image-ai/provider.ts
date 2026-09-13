@@ -1,4 +1,5 @@
 import type { GeneratedImage, ImageGenerationInput } from "@/lib/image-ai/types";
+import type { ProviderRuntimeConfig } from "@/lib/providers/types";
 
 export interface ImageGenerationProvider {
   readonly name: string;
@@ -7,6 +8,8 @@ export interface ImageGenerationProvider {
   readonly maxOutputs: number;
   generateProductImages(input: ImageGenerationInput): Promise<GeneratedImage[]>;
 }
+
+export type ImageProviderFactory = (config: ProviderRuntimeConfig) => ImageGenerationProvider;
 
 export class ImageGenerationError extends Error {
   constructor(

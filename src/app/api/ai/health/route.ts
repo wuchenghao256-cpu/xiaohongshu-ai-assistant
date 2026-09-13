@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/supabase/auth";
 
 export async function POST() {
   try {
-    await requireUser();
-    return Response.json(await getAiProvider().healthCheck());
+    const { user } = await requireUser();
+    return Response.json(await (await getAiProvider(user.id)).healthCheck());
   } catch (error) { return jsonError(error); }
 }
