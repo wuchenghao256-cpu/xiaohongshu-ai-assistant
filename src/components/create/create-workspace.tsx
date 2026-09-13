@@ -2,7 +2,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FileText, ImagePlus, Loader2, Save } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -101,6 +101,16 @@ export function CreateWorkspace({
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
+  useEffect(() => {
+    const savedTaskId = window.sessionStorage.getItem("xhs-current-content-task");
+    if (!savedTaskId) return;
+    const timer = window.setTimeout(() => setTaskId(savedTaskId), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (taskId) window.sessionStorage.setItem("xhs-current-content-task", taskId);
+  }, [taskId]);
   const form = useForm<FormInput>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -303,7 +313,7 @@ export function CreateWorkspace({
       toast.error(error instanceof Error ? error.message : "生成失败，请重试");
     }
   }
-  function addGeneratedAssets(generated: GeneratedAssetRecord[]) {
+  const addGeneratedAssets = useCallback((generated: GeneratedAssetRecord[]) => {
     const added = generated.map((asset) => ({
       id: asset.id,
       storagePath: asset.storage_path,
@@ -312,12 +322,15 @@ export function CreateWorkspace({
       size: asset.size_bytes,
       kind: "generated" as const,
     }));
-    setAssets((value) => [...value, ...added]);
+    setAssets((value) => {
+      const existing = new Set(value.map((asset) => asset.id));
+      return [...value, ...added.filter((asset) => !existing.has(asset.id))];
+    });
     setSelectedAssetIds((value) => [
       ...value,
       ...added.map((asset) => asset.id),
     ]);
-  }
+  }, []);
   async function toggleAsset(assetId: string) {
     const selected = !selectedAssetIds.includes(assetId);
     try {
@@ -424,6 +437,7 @@ export function CreateWorkspace({
               existingAssetCount={assets.length}
               ensureTask={ensureTask}
               onGenerated={addGeneratedAssets}
+              taskId={taskId}
             />
 
             <details className="workspace-section group/advanced">

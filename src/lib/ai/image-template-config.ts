@@ -6,7 +6,8 @@ export const modelPoses = ["hand_carry", "shoulder_carry", "walking", "sitting",
 export const modelScenes = ["studio", "street", "cafe", "indoor_minimal"] as const;
 export const modelImageAspectRatios = ["4:5", "3:4", "1:1", "9:16"] as const;
 export const modelProductFocusOptions = ["product", "balanced"] as const;
-export const modelGenerationModes = ["fidelity", "editorial"] as const;
+export const modelGenerationModes = ["precise_edit", "creative_ad"] as const;
+export const creativeVariationLevels = ["low", "medium", "high"] as const;
 
 export type ModelProductCategory = (typeof modelProductCategories)[number];
 export type ModelGender = (typeof modelGenders)[number];
@@ -17,6 +18,7 @@ export type ModelScene = (typeof modelScenes)[number];
 export type ModelImageAspectRatio = (typeof modelImageAspectRatios)[number];
 export type ModelProductFocus = (typeof modelProductFocusOptions)[number];
 export type ModelGenerationMode = (typeof modelGenerationModes)[number];
+export type CreativeVariationLevel = (typeof creativeVariationLevels)[number];
 
 export type ModelImageTemplate = {
   id: string;
@@ -398,6 +400,11 @@ export const modelProductFocusLabels: Record<ModelProductFocus, string> = {
   balanced: "模特与商品平衡",
 };
 export const modelGenerationModeLabels: Record<ModelGenerationMode, string> = {
-  fidelity: "高保真",
-  editorial: "高级风格",
+  precise_edit: "精准编辑",
+  creative_ad: "创意广告",
+};
+export const creativeVariationLevelLabels: Record<CreativeVariationLevel, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
 };

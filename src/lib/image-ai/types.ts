@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   modelGenders,
   modelGenerationModes,
+  creativeVariationLevels,
   modelImageAspectRatios,
   modelImageTemplates,
   modelProductCategories,
@@ -40,7 +41,8 @@ export const modelProductImageRequestSchema = z.object({
   aspectRatio: z.enum(modelImageAspectRatios),
   count: z.union([z.literal(1), z.literal(2), z.literal(4)]),
   productFocus: z.enum(modelProductFocusOptions),
-  generationMode: z.enum(modelGenerationModes).default("fidelity"),
+  generationMode: z.enum(modelGenerationModes).default("precise_edit"),
+  creativeVariation: z.enum(creativeVariationLevels).default("medium"),
 });
 
 export const productImageRequestSchema = z.union([

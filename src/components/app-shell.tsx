@@ -9,6 +9,7 @@ import {
   PenLine,
   Send,
   Settings,
+  Video,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/create", label: "创作", icon: PenLine },
   { href: "/create#generated-images-title", label: "素材库", icon: Images },
+  { href: "/video", label: "AI视频", icon: Video },
   { href: "/history", label: "历史记录", icon: FileClock },
   { href: "/publishing", label: "发布管理", icon: Send },
   { href: "/settings", label: "系统设置", icon: Settings },

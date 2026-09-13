@@ -12,10 +12,11 @@ export async function testProviderConnection(config: ProviderRuntimeConfig) {
   const base = safeBaseUrl(config.baseUrl);
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 12_000);
   try {
-    const url = config.provider === "google" ? `${base}/models/${encodeURIComponent(config.model)}` : `${base.replace(/\/images\/generations$/, "")}/models`;
+    const url = config.provider === "google" ? `${base}/models/${encodeURIComponent(config.model)}` : config.provider === "runway" ? `${base}/tasks/00000000-0000-0000-0000-000000000000` : `${base.replace(/\/images\/generations$/, "")}/models`;
     const headers: Record<string, string> = config.provider === "google" ? { "x-goog-api-key": config.apiKey } : { Authorization: `Bearer ${config.apiKey}` };
     const response = await fetch(url, { headers, signal: controller.signal, cache: "no-store" });
     if (response.status === 401 || response.status === 403) return { success: false, message: "Invalid API Key" };
+    if (config.provider === "runway" && response.status === 404) return { success: true, message: "连接成功" };
     if (response.status === 404) return { success: false, message: "Model not found or models endpoint unavailable" };
     if (!response.ok) return { success: false, message: `API unavailable (HTTP ${response.status})` };
     if (config.provider !== "google") {

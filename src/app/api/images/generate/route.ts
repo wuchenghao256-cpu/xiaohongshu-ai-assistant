@@ -136,6 +136,7 @@ export async function POST(request: Request) {
         style: input.style,
         productFocus: input.productFocus,
         generationMode: input.generationMode,
+        creativeVariation: input.creativeVariation,
         referenceCount: references.length,
       });
       generated = await generateModelProductImages(user.id, {

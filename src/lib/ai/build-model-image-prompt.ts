@@ -2,6 +2,7 @@ import "server-only";
 import type {
   ModelGender,
   ModelGenerationMode,
+  CreativeVariationLevel,
   ModelImageTemplate,
   ModelProductCategory,
   ModelProductFocus,
@@ -33,8 +34,14 @@ const focusInstructions: Record<ModelProductFocus, string> = {
 };
 
 const generationModeInstructions: Record<ModelGenerationMode, string> = {
-  fidelity: "FIDELITY MODE: Product accuracy is the first priority. Use minimal creative freedom, a clean background, straightforward styling, and a simple stable pose. Do not redesign, restyle, crop away, conceal, or reinterpret the product.",
-  editorial: "EDITORIAL MODE: Use stronger premium fashion styling, a more expressive but anatomically natural pose, and a polished fashion-forward composition. Light styling variation is allowed, but the product must remain clearly visible and faithful to its identity.",
+  precise_edit: "PRECISE EDIT MODE: Product accuracy is the first priority. Use minimal creative freedom, a clean background, straightforward styling, and a simple stable pose. Keep the source composition and presentation close unless the template explicitly requires a change. Do not redesign, restyle, crop away, conceal, or reinterpret the product.",
+  creative_ad: "CREATIVE AD MODE: Lock only the product identity: exact structure, silhouette and fit, colors, material appearance, Logo, readable product text, hardware, packaging, construction and distinctive details. Deliberately create a visibly different advertisement. The person, action, pose, background, lighting, camera angle, camera distance, composition, scene and advertising style may change substantially. Do not copy the reference framing, pose, background or camera viewpoint. Product identity must remain accurate and clearly recognizable.",
+};
+
+const variationInstructions: Record<CreativeVariationLevel, string> = {
+  low: "CREATIVE VARIATION LOW: Change at least the background, lighting and camera angle while keeping a restrained commercial treatment.",
+  medium: "CREATIVE VARIATION MEDIUM: Use a clearly different person pose or action, scene, camera angle, shooting distance, lighting and composition; create a new campaign image rather than a near-copy.",
+  high: "CREATIVE VARIATION HIGH: Make a bold campaign reinterpretation with a substantially different setting, dynamic action, dramatic lighting, lens perspective, distance and composition while preserving every locked product identity detail.",
 };
 
 const clothingFramingInstructions: Record<ModelProductCategory, string> = {
@@ -52,6 +59,7 @@ export type ModelImagePromptInput = {
   style: ModelStyle;
   productFocus: ModelProductFocus;
   generationMode: ModelGenerationMode;
+  creativeVariation: CreativeVariationLevel;
   referenceCount: number;
 };
 
@@ -74,6 +82,7 @@ export function buildModelImagePrompt(input: ModelImagePromptInput): ModelImageP
       styleInstructions[input.style],
       focusInstructions[input.productFocus],
       generationModeInstructions[input.generationMode],
+      input.generationMode === "creative_ad" ? variationInstructions[input.creativeVariation] : "",
       clothingFramingInstructions[input.productCategory],
       referenceInstruction,
       `Composition settings: ${input.template.framing.replaceAll("_", " ")} framing, ${input.template.pose.replaceAll("_", " ")} pose, ${input.template.scene.replaceAll("_", " ")} scene.`,

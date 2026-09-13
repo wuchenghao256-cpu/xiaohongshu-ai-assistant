@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, ImagePlus, Loader2 } from "lucide-react";
+import { Check, ImagePlus, Loader2, RotateCcw } from "lucide-react";
 import Image from "next/image";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
   Select,
@@ -16,10 +17,13 @@ import {
 import {
   modelGenerationModeLabels,
   modelGenerationModes,
+  creativeVariationLevels,
+  creativeVariationLevelLabels,
   modelGenderLabels,
   modelImageAspectRatios,
   modelImageTemplates,
   type ModelGenerationMode,
+  type CreativeVariationLevel,
   type ModelImageAspectRatio,
   type ModelProductCategory,
   type ModelProductFocus,
@@ -35,6 +39,15 @@ export type GeneratedAssetRecord = {
   size_bytes: number;
   signedUrl: string;
 };
+type JobStatus = "queued" | "generating" | "completed" | "failed";
+type ChildJob = { id: string; position: number; status: JobStatus; attempts: number; asset_id?: string | null; error_message?: string | null };
+type BatchState = {
+  batch: { id: string; task_id: string; status: JobStatus; total_count: number; completed_count: number; failed_count: number; request_snapshot?: Record<string, unknown> };
+  children: ChildJob[];
+  assets: GeneratedAssetRecord[];
+  supportsOutputCount?: boolean;
+};
+const jobStatusLabels: Record<JobStatus, string> = { queued: "排队中", generating: "生成中", completed: "已完成", failed: "失败" };
 const generationCounts = [1, 2, 4] as const;
 const sceneLabels: Record<string, string> = {
   studio: "极简棚拍",
@@ -60,6 +73,7 @@ export function AiImageGenerator({
   existingAssetCount,
   ensureTask,
   onGenerated,
+  taskId,
 }: {
   configured: boolean;
   disabled: boolean;
@@ -67,6 +81,7 @@ export function AiImageGenerator({
   existingAssetCount: number;
   ensureTask: () => Promise<string>;
   onGenerated: (assets: GeneratedAssetRecord[]) => void;
+  taskId?: string;
 }) {
   const defaultTemplate =
     modelImageTemplates.find((template) => template.isDefault) ??
@@ -86,12 +101,45 @@ export function AiImageGenerator({
   const [productFocus, setProductFocus] =
     useState<ModelProductFocus>("product");
   const [generationMode, setGenerationMode] =
-    useState<ModelGenerationMode>("fidelity");
+    useState<ModelGenerationMode>("precise_edit");
+  const [creativeVariation, setCreativeVariation] =
+    useState<CreativeVariationLevel>("medium");
   const [generating, setGenerating] = useState(false);
+  const [batchState, setBatchState] = useState<BatchState | null>(null);
   const selectedTemplate =
     modelImageTemplates.find((template) => template.id === templateId) ??
     defaultTemplate;
   const exceedsAssetLimit = existingAssetCount + count > 9;
+  const batchActive = batchState?.children.some((job) => job.status === "queued" || job.status === "generating") ?? false;
+
+  const loadBatch = useCallback(async (currentTaskId: string) => {
+    const response = await fetch(`/api/image-jobs?taskId=${encodeURIComponent(currentTaskId)}`, { cache: "no-store" });
+    if (!response.ok) return null;
+    const data = await response.json() as BatchState;
+    if (data.batch) {
+      setBatchState(data);
+      if (data.assets?.length) onGenerated(data.assets);
+      return data;
+    }
+    return null;
+  }, [onGenerated]);
+
+  useEffect(() => {
+    if (!taskId) return;
+    const timer = window.setTimeout(() => void loadBatch(taskId), 0);
+    return () => window.clearTimeout(timer);
+  }, [taskId, loadBatch]);
+
+  useEffect(() => {
+    if (!taskId || !batchState?.children.some((job) => job.status === "queued" || job.status === "generating")) return;
+    const timer = window.setInterval(() => void loadBatch(taskId), 2000);
+    return () => window.clearInterval(timer);
+  }, [taskId, batchState?.children, loadBatch]);
+
+  function requestPayload(currentTaskId: string, requestedCount: number) {
+    return { mode: "model-template", taskId: currentTaskId, referenceAssetIds, templateId, productCategory, gender, style, aspectRatio, count: requestedCount, productFocus, generationMode, creativeVariation };
+  }
+
 
   function applyTemplate(nextTemplateId: string) {
     const template = modelImageTemplates.find(
@@ -107,7 +155,8 @@ export function AiImageGenerator({
     setProductFocus(
       template.framing === "product_focus" ? "product" : "balanced",
     );
-    setGenerationMode("fidelity");
+    setGenerationMode("precise_edit");
+    setCreativeVariation("medium");
   }
 
   async function generate() {
@@ -124,31 +173,16 @@ export function AiImageGenerator({
     setGenerating(true);
     try {
       const taskId = await ensureTask();
-      const response = await fetch("/api/images/generate", {
+      const payload = requestPayload(taskId, count);
+      const response = await fetch("/api/image-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "model-template",
-          taskId,
-          referenceAssetIds,
-          templateId,
-          productCategory,
-          gender,
-          style,
-          aspectRatio,
-          count,
-          productFocus,
-          generationMode,
-        }),
+        body: JSON.stringify(payload),
       });
-      const data = (await response.json()) as {
-        assets?: GeneratedAssetRecord[];
-        error?: string;
-      };
-      if (!response.ok || !data.assets)
-        throw new Error(data.error || "图片生成失败");
-      onGenerated(data.assets);
-      toast.success(`已生成并保存 ${data.assets.length} 张商品图`);
+      const data = (await response.json()) as BatchState & { error?: string };
+      if (!response.ok || !data.batch) throw new Error(data.error || "图片任务创建失败");
+      setBatchState(data);
+      toast.success("图片批次已创建，正在后台生成");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "图片生成失败，请稍后重试",
@@ -156,6 +190,19 @@ export function AiImageGenerator({
     } finally {
       setGenerating(false);
     }
+  }
+
+  async function retryFailed() {
+    if (!batchState) return;
+    setGenerating(true);
+    try {
+      const response = await fetch("/api/image-jobs", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ batchId: batchState.batch.id }) });
+      const state = await response.json() as BatchState & { error?: string };
+      if (!response.ok) throw new Error(state.error ?? "重试任务失败");
+      setBatchState(state);
+      toast.success("已重新提交失败图片");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "重试失败"); }
+    finally { setGenerating(false); }
   }
 
   return (
@@ -169,7 +216,7 @@ export function AiImageGenerator({
           <p>控制图片比例、生成数量和视觉表现。</p>
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field>
           <FieldLabel htmlFor="model-aspect-ratio">图片比例</FieldLabel>
           <Select
@@ -236,7 +283,29 @@ export function AiImageGenerator({
             </SelectContent>
           </Select>
         </Field>
+        <Field>
+          <FieldLabel htmlFor="creative-variation">创意变化强度</FieldLabel>
+          <Select
+            value={creativeVariation}
+            disabled={generationMode !== "creative_ad"}
+            onValueChange={(value) => value && setCreativeVariation(value as CreativeVariationLevel)}
+          >
+            <SelectTrigger id="creative-variation" className="w-full">
+              <SelectValue>{creativeVariationLevelLabels[creativeVariation]}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {creativeVariationLevels.map((value) => (
+                <SelectItem key={value} value={value}>{creativeVariationLevelLabels[value]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
       </div>
+      <p className="mt-3 text-xs leading-5 text-muted-foreground">
+        {generationMode === "creative_ad"
+          ? "只锁定商品身份信息，主动改变人物、动作、场景、灯光、镜头和广告构图。"
+          : "保持现有高保真编辑逻辑，尽量贴近原图呈现。"}
+      </p>
 
       <div className="mt-6 border-t pt-5">
         <div className="workspace-section-heading">
@@ -304,13 +373,38 @@ export function AiImageGenerator({
           !configured ||
           disabled ||
           generating ||
+          batchActive ||
           !referenceAssetIds.length ||
           exceedsAssetLimit
         }
       >
-        {generating ? <Loader2 className="animate-spin" /> : <ImagePlus />}
-        {generating ? "正在生成并保存…" : `生成 ${count} 张商品图`}
+        {generating || batchActive ? <Loader2 className="animate-spin" /> : <ImagePlus />}
+        {generating ? "正在创建批次…" : batchActive ? "批次后台生成中…" : `生成 ${count} 张商品图`}
       </Button>
+      {batchState ? (
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-live="polite">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium">本批次图片任务</p>
+            {batchState.children.some((job) => job.status === "failed") ? (
+              <Button type="button" size="sm" variant="outline" disabled={generating} onClick={() => void retryFailed()}>
+                <RotateCcw />只重试失败图片
+              </Button>
+            ) : null}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {batchState.children.map((job) => (
+              <div key={job.id} className="rounded-md border bg-background px-3 py-2">
+                <p className="text-xs text-muted-foreground">图片 {job.position}</p>
+                <Badge className="mt-1" variant={job.status === "failed" ? "destructive" : "secondary"}>
+                  {job.status === "generating" ? <Loader2 className="animate-spin" /> : null}
+                  {jobStatusLabels[job.status]}
+                </Badge>
+                {job.attempts > 1 ? <p className="mt-1 text-[11px] text-muted-foreground">第 {job.attempts} 次尝试</p> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

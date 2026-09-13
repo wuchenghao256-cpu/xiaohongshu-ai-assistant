@@ -71,6 +71,13 @@ const providers: Array<{
     baseUrl: "",
     models: [],
   },
+  {
+    id: "runway",
+    name: "Runway",
+    description: "Runway 视频生成与 Product Recipes",
+    baseUrl: "https://api.dev.runwayml.com/v1",
+    models: ["gen4_turbo", "gen4.5"],
+  },
 ];
 
 type Draft = {
@@ -78,6 +85,7 @@ type Draft = {
   apiKey: string;
   modelPreset: string;
   customModel: string;
+  qualityModel: string;
   enabled: boolean;
 };
 
@@ -112,6 +120,7 @@ export function ProviderSettings({
       existing && !provider.models.includes(existing.model)
         ? existing.model
         : "",
+    qualityModel: existing?.qualityModel ?? "gen4.5",
     enabled: existing?.enabled ?? false,
   };
   const update = (partial: Partial<Draft>) =>
@@ -138,6 +147,7 @@ export function ProviderSettings({
             baseUrl: draft.baseUrl,
             apiKey: draft.apiKey || undefined,
             model,
+            qualityModel: category === "video" ? draft.qualityModel : undefined,
             enabled: draft.enabled,
           }),
         },
@@ -167,12 +177,12 @@ export function ProviderSettings({
       <CardHeader className="border-b">
         <CardTitle>AI 服务商</CardTitle>
         <CardDescription>
-          配置文案与图片模型。密钥仅在服务端加密保存，页面不会读取完整密钥。
+          配置文案、图片与视频模型。密钥仅在服务端加密保存，页面不会读取完整密钥。
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         <div className="flex border-b px-4 pt-2 sm:px-6" role="tablist">
-          {(["text", "image"] as const).map((item) => (
+          {(["text", "image", "video"] as const).map((item) => (
             <button
               key={item}
               type="button"
@@ -180,7 +190,7 @@ export function ProviderSettings({
               aria-selected={category === item}
               onClick={() => {
                 setCategory(item);
-                setOpen(item === "text" ? "custom" : "seedream");
+                setOpen(item === "text" ? "custom" : item === "video" ? "runway" : "seedream");
               }}
               className={cn(
                 "min-h-11 border-b-2 px-4 text-sm font-medium",
@@ -189,7 +199,7 @@ export function ProviderSettings({
                   : "border-transparent text-muted-foreground",
               )}
             >
-              {item === "text" ? "文案模型" : "图片模型"}
+              {item === "text" ? "文案模型" : item === "video" ? "视频模型" : "图片模型"}
             </button>
           ))}
         </div>
@@ -198,9 +208,11 @@ export function ProviderSettings({
             {providers
               .filter(
                 (item) =>
-                  category === "image" ||
-                  item.id === "openai" ||
-                  item.id === "custom",
+                  category === "video"
+                    ? item.id === "runway"
+                    : category === "image"
+                      ? item.id !== "runway"
+                      : item.id === "openai" || item.id === "custom",
               )
               .map((item) => {
                 const config = configs.find(
@@ -286,7 +298,7 @@ export function ProviderSettings({
                     type={visible ? "text" : "password"}
                     value={draft.apiKey}
                     onChange={(event) => update({ apiKey: event.target.value })}
-                    placeholder={existing?.maskedApiKey ?? "输入 API Key"}
+                    placeholder={existing?.hasApiKey ? "已安全保存；留空保持不变" : "输入 API Key"}
                     autoComplete="new-password"
                     className="pr-11"
                   />
@@ -303,13 +315,15 @@ export function ProviderSettings({
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {existing
-                    ? `已保存：${existing.maskedApiKey}。留空将保留原密钥。`
+                    ? "API Key 已在服务端加密保存。留空将保留原密钥，页面和接口响应不会返回任何密钥片段。"
                     : "使用 AES-256-GCM 加密后保存。"}
                 </p>
               </Field>
               {provider.models.length ? (
                 <Field>
-                  <FieldLabel htmlFor="provider-preset">推荐模型</FieldLabel>
+                  <FieldLabel htmlFor="provider-preset">
+                    {category === "video" ? "默认快速模型" : "推荐模型"}
+                  </FieldLabel>
                   <Select
                     value={draft.modelPreset}
                     onValueChange={(value) =>
@@ -346,6 +360,25 @@ export function ProviderSettings({
                   }
                 />
               </Field>
+              {category === "video" ? (
+                <Field>
+                  <FieldLabel htmlFor="provider-quality-model">默认高质量模型</FieldLabel>
+                  <Select
+                    value={draft.qualityModel}
+                    onValueChange={(value) => value && update({ qualityModel: value })}
+                  >
+                    <SelectTrigger id="provider-quality-model" className="w-full">
+                      <SelectValue>{draft.qualityModel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {provider.models.map((item) => (
+                        <SelectItem key={item} value={item}>{item}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">模型列表为可扩展配置，后续可加入 Veo、Seedance、Hailuo。</p>
+                </Field>
+              ) : null}
               <label className="flex min-h-11 items-center gap-3 text-sm">
                 <input
                   type="checkbox"

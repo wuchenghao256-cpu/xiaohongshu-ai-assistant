@@ -56,6 +56,9 @@ export default async function SettingsPage() {
           <a href="#ai-providers" className="settings-nav-link">
             AI 服务商
           </a>
+          <a href="#ai-providers" className="settings-nav-link">
+            视频 API
+          </a>
           <a href="#accounts" className="settings-nav-link">
             账号管理
           </a>

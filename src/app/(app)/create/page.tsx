@@ -1,6 +1,8 @@
 import { PageHeader } from "@/components/page-header";
 import { CreateWorkspace } from "@/components/create/create-workspace";
-import { getImageAiConfigStatus, getSupabasePublicEnv } from "@/lib/env";
+import { getImageAiConfigStatus, getSupabasePublicEnv, hasProviderEncryptionKey } from "@/lib/env";
+import { listProviderConfigs } from "@/lib/providers/repository";
+import { getCurrentUser } from "@/lib/supabase/server";
 import { createClient } from "@/lib/supabase/server";
 import {
   templateSelectColumns,
@@ -10,6 +12,7 @@ import {
 export default async function CreatePage() {
   const configured = Boolean(getSupabasePublicEnv());
   let templates: ContentTemplate[] = [];
+  let savedImageProvider = false;
   if (configured) {
     const result = await (await createClient())
       .from("content_templates")
@@ -17,6 +20,11 @@ export default async function CreatePage() {
       .order("is_default", { ascending: false })
       .order("updated_at", { ascending: false });
     templates = (result.data ?? []) as ContentTemplate[];
+    const user = await getCurrentUser();
+    if (user && hasProviderEncryptionKey()) {
+      const providers = await listProviderConfigs(user.id).catch(() => []);
+      savedImageProvider = providers.some((item) => item.category === "image" && item.enabled);
+    }
   }
   return (
     <>
@@ -26,7 +34,7 @@ export default async function CreatePage() {
       />
       <CreateWorkspace
         configured={configured}
-        imageAiConfigured={getImageAiConfigStatus().configured}
+        imageAiConfigured={getImageAiConfigStatus().configured || savedImageProvider}
         initialTemplates={templates}
       />
     </>

@@ -11,15 +11,19 @@ export function imagesEndpoint(baseUrl: string) { const value = baseUrl.replace(
 
 export class OpenAiCompatibleImageProvider implements ImageGenerationProvider {
   readonly name: string; readonly model: string; readonly qualityPreset = "high"; readonly maxOutputs = 4;
-  constructor(protected readonly config: ProviderRuntimeConfig, name = "custom") { this.name = name; this.model = config.model; }
+  readonly supportsOutputCount: boolean;
+  constructor(protected readonly config: ProviderRuntimeConfig, name = "custom") { this.name = name; this.model = config.model; this.supportsOutputCount = name === "openai"; }
   protected requestBody(input: ImageGenerationInput, index: number) { return { model: this.model, prompt: [input.prompt, input.negativePrompt ? `Avoid: ${input.negativePrompt}.` : "", input.count > 1 ? `Image ${index + 1} of ${input.count}; preserve the product and vary only composition.` : ""].filter(Boolean).join("\n"), ...(input.references.length ? { image: input.references.length === 1 ? input.references[0].url : input.references.map((item) => item.url) } : {}), size: sizeByRatio[input.aspectRatio], response_format: "url" }; }
-  private async requestOne(input: ImageGenerationInput, index: number): Promise<GeneratedImage> {
+  private async request(input: ImageGenerationInput, index: number, outputCount = 1): Promise<GeneratedImage[]> {
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 150_000);
     try {
-      const response = await fetch(imagesEndpoint(this.config.baseUrl), { method: "POST", headers: { Authorization: `Bearer ${this.config.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(this.requestBody(input, index)), signal: controller.signal, cache: "no-store" });
+      const response = await fetch(imagesEndpoint(this.config.baseUrl), { method: "POST", headers: { Authorization: `Bearer ${this.config.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...this.requestBody(input, index), ...(outputCount > 1 ? { n: outputCount } : {}) }), signal: controller.signal, cache: "no-store" });
       if (!response.ok) throw new ImageGenerationError(`图片生成服务请求失败（HTTP ${response.status}），请检查模型、接口或账户额度。`, "REQUEST_FAILED", 502);
-      const parsed = responseSchema.safeParse(await response.json()); if (!parsed.success) throw new ImageGenerationError("图片生成服务返回了无法识别的结果。", "INVALID_RESPONSE", 502); return parsed.data.data[0];
+      const parsed = responseSchema.safeParse(await response.json()); if (!parsed.success) throw new ImageGenerationError("图片生成服务返回了无法识别的结果。", "INVALID_RESPONSE", 502); return parsed.data.data.map((item) => ({ url: item.url, b64Json: item.b64_json }));
     } catch (error) { if (error instanceof ImageGenerationError) throw error; if (error instanceof Error && error.name === "AbortError") throw new ImageGenerationError("图片生成超时，请稍后重试。", "TIMEOUT", 504); throw new ImageGenerationError("无法连接图片生成服务，请检查接口地址或网络。", "REQUEST_FAILED", 502); } finally { clearTimeout(timer); }
   }
-  generateProductImages(input: ImageGenerationInput) { return Promise.all(Array.from({ length: input.count }, (_, index) => this.requestOne(input, index))); }
+  async generateProductImages(input: ImageGenerationInput) {
+    if (this.supportsOutputCount && input.count > 1) return this.request(input, 0, input.count);
+    return (await Promise.all(Array.from({ length: input.count }, (_, index) => this.request(input, index)))).flat();
+  }
 }

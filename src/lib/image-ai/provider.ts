@@ -6,6 +6,7 @@ export interface ImageGenerationProvider {
   readonly model: string;
   readonly qualityPreset: string;
   readonly maxOutputs: number;
+  readonly supportsOutputCount?: boolean;
   generateProductImages(input: ImageGenerationInput): Promise<GeneratedImage[]>;
 }
 
