@@ -5,7 +5,10 @@ import {
   buildSeedanceRequestBody,
   failureMessage,
   mapSeedanceError,
+  mapSeedanceStatus,
   SeedanceError,
+  shouldRetryCreate,
+  shouldRetryQuery,
   type SeedanceStatus,
 } from "@/lib/video/seedance-mapping";
 import type { VideoJobInput } from "@/lib/video/types";
@@ -40,7 +43,13 @@ export type SeedanceTask = {
   meta: Record<string, string | number>;
 };
 
-async function arkFetch(config: ProviderRuntimeConfig, path: string, init: RequestInit, timeoutMs: number) {
+/**
+ * 创建任务时**只**对限流做重试。视频任务很贵，创建请求超时或返回 5xx 时都无法确定
+ * 方舟是否已经受理并计费，因此一律不重试，避免一次点击产生两条付费任务。
+ * 重试策略（shouldRetryCreate / shouldRetryQuery）定义在 seedance-mapping.ts，便于直接测试。
+ */
+
+async function arkFetch(config: ProviderRuntimeConfig, path: string, init: RequestInit, timeoutMs: number, shouldRetry: (error: unknown) => boolean) {
   const base = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "");
   return withExponentialRetry(async () => {
     const controller = new AbortController();
@@ -57,7 +66,6 @@ async function arkFetch(config: ProviderRuntimeConfig, path: string, init: Reque
         },
       });
       const payload = await response.json().catch(() => null);
-      // 视频任务很贵，创建请求绝不能在超时后盲目重试，否则可能重复计费。
       if (!response.ok) throw mapSeedanceError(response.status, payload);
       return payload as Record<string, unknown>;
     } catch (error) {
@@ -69,7 +77,7 @@ async function arkFetch(config: ProviderRuntimeConfig, path: string, init: Reque
     } finally {
       clearTimeout(timer);
     }
-  }, (error) => error instanceof SeedanceError && (error.code === "ARK_UNAVAILABLE" || error.code === "ARK_QUOTA"), { maxAttempts: 3, baseDelayMs: 800 });
+  }, shouldRetry, { maxAttempts: 3, baseDelayMs: 800 });
 }
 
 /** 创建视频任务，返回方舟任务 ID（形如 cgt-...）。 */
@@ -77,7 +85,7 @@ export async function createSeedanceTask(config: ProviderRuntimeConfig, input: V
   const payload = await arkFetch(config, "/contents/generations/tasks", {
     method: "POST",
     body: JSON.stringify(buildSeedanceRequestBody(config, input, prompt, urls)),
-  }, CREATE_TIMEOUT_MS);
+  }, CREATE_TIMEOUT_MS, shouldRetryCreate);
   const id = typeof payload.id === "string" ? payload.id : undefined;
   if (!id) throw new SeedanceError("火山方舟没有返回任务 ID，请稍后重试。", "ARK_INVALID_RESPONSE", 502);
   return id;
@@ -90,9 +98,9 @@ function nestedString(payload: Record<string, unknown>, key: string) {
 }
 
 export async function getSeedanceTask(config: ProviderRuntimeConfig, id: string, currentProgress = 0): Promise<SeedanceTask> {
-  const payload = await arkFetch(config, `/contents/generations/tasks/${encodeURIComponent(id)}`, { method: "GET" }, QUERY_TIMEOUT_MS);
+  const payload = await arkFetch(config, `/contents/generations/tasks/${encodeURIComponent(id)}`, { method: "GET" }, QUERY_TIMEOUT_MS, shouldRetryQuery);
   const providerStatus = typeof payload.status === "string" ? payload.status : "unknown";
-  const status: SeedanceStatus = mapStatus(providerStatus);
+  const status = mapSeedanceStatus(providerStatus);
   const usage = payload.usage as Record<string, unknown> | undefined;
   const tokens = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : undefined;
   return {
@@ -109,14 +117,6 @@ export async function getSeedanceTask(config: ProviderRuntimeConfig, id: string,
       ...(typeof payload.ratio === "string" ? { ratio: payload.ratio } : {}),
     },
   };
-}
-
-function mapStatus(raw: string): SeedanceStatus {
-  const status = raw.toLowerCase();
-  if (status === "queued") return "queued";
-  if (status === "succeeded") return "completed";
-  if (status === "failed" || status === "expired" || status === "canceled" || status === "cancelled") return "failed";
-  return "generating";
 }
 
 /** 方舟不返回百分比进度。这里按轮询阶段给出单调递增的估算值，不虚构精确进度。 */

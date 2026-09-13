@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { toUserMessage } from "./errors.ts";
+import { hasPollingTimedOut, isDueForPoll, isStrandedQueuedJob, pollDelaySeconds } from "./poll-schedule.ts";
+import { buildVideoPrompt } from "./prompts.ts";
 import {
   buildSeedanceContent,
   buildSeedanceRequestBody,
@@ -7,9 +10,10 @@ import {
   mapSeedanceError,
   mapSeedanceStatus,
   REFERENCE_IMAGE_ROLE,
+  SeedanceError,
+  shouldRetryCreate,
+  shouldRetryQuery,
 } from "./seedance-mapping.ts";
-import { buildVideoPrompt } from "./prompts.ts";
-import { hasPollingTimedOut, isDueForPoll, isStrandedQueuedJob, pollDelaySeconds } from "./poll-schedule.ts";
 import { videoJobInputSchema, withoutIdempotencyKey } from "./types.ts";
 
 const idempotencyKey = "11111111-1111-4111-8111-111111111111";
@@ -150,4 +154,37 @@ test("总超时后停止轮询，中断的提交不会永远停留在排队中",
   assert.equal(isStrandedQueuedJob({ status: "queued", external_task_id: null, created_at: recent }, now), false);
   assert.equal(isStrandedQueuedJob({ status: "queued", external_task_id: "cgt-1", created_at: long }, now), false);
   assert.equal(isStrandedQueuedJob({ status: "generating", external_task_id: null, created_at: long }, now), false);
+});
+
+test("只有限流错误可以重试创建请求；超时与 5xx 都不能重试，避免重复计费", () => {
+  const quota = new SeedanceError("quota", "ARK_QUOTA", 429);
+  const unavailable = new SeedanceError("5xx", "ARK_UNAVAILABLE", 502);
+  const timeout = new SeedanceError("timeout", "ARK_TIMEOUT", 504);
+  const unauthorized = new SeedanceError("401", "ARK_UNAUTHORIZED", 401);
+
+  assert.equal(shouldRetryCreate(quota), true, "429 可以安全重试");
+  assert.equal(shouldRetryCreate(unavailable), false, "5xx 时方舟可能已受理，重试会重复计费");
+  assert.equal(shouldRetryCreate(timeout), false, "超时后不知道方舟是否受理，不能重试");
+  assert.equal(shouldRetryCreate(unauthorized), false);
+
+  // 查询没有副作用，5xx 与限流都可以重试
+  assert.equal(shouldRetryQuery(unavailable), true);
+  assert.equal(shouldRetryQuery(quota), true);
+  assert.equal(shouldRetryQuery(timeout), false);
+});
+
+test("只有 Provider 的中文提示会展示给用户，原始错误一律替换", () => {
+  const original = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(toUserMessage(new SeedanceError("该真人素材需要先在火山方舟完成肖像授权后才能用于视频生成。", "ARK_PORTRAIT_CONSENT", 403)),
+      "该真人素材需要先在火山方舟完成肖像授权后才能用于视频生成。");
+    // Supabase / Storage 原始错误绝不能出现在 UI
+    const raw = toUserMessage(new Error('duplicate key value violates unique constraint "video_jobs_idempotency_idx"'));
+    assert.equal(raw, "视频生成失败，请重试。");
+    assert.equal(raw.includes("constraint"), false);
+    assert.equal(toUserMessage({ message: "storage bucket not found" }, "视频任务创建失败，请重试。"), "视频任务创建失败，请重试。");
+  } finally {
+    console.error = original;
+  }
 });

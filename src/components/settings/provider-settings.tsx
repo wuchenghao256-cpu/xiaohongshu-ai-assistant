@@ -136,8 +136,7 @@ export function ProviderSettings({
     setDrafts((current) => ({ ...current, [key]: { ...draft, ...partial } }));
   const model = draft.customModel.trim() || draft.modelPreset;
   /** 火山方舟的图片与视频共用同一把 Key：已为 Seedream 配置过就不必再次填写。 */
-  const reusesArkKey =
-    open === "volcengine" && !draft.apiKey.trim() && (arkKeyReusable || !existing);
+  const reusesArkKey = open === "volcengine" && !draft.apiKey.trim() && arkKeyReusable;
 
   async function submit(action: "save" | "test") {
     if (!draft.baseUrl || !model || (!draft.apiKey && !existing && !reusesArkKey)) {

@@ -3,7 +3,7 @@ import { jsonError } from "@/lib/http";
 import { getEnabledProviderConfig } from "@/lib/providers/repository";
 import { requireUser } from "@/lib/supabase/auth";
 import { isDueForPoll, isStrandedQueuedJob, pollVideoJob, type PollableJob } from "@/lib/video/poll";
-import { createProviderTask } from "@/lib/video/provider";
+import { createProviderTask, toUserMessage } from "@/lib/video/provider";
 import { videoJobInputSchema, withoutIdempotencyKey, type VideoJobInput } from "@/lib/video/types";
 
 export const maxDuration = 120;
@@ -68,10 +68,15 @@ async function startJob(userId: string, supabase: Supabase, input: VideoJobInput
       status: "generating", progress: 5, external_task_id: externalTaskId,
       submitted_at: new Date().toISOString(),
     }).eq("id", created.data.id).select(JOB_COLUMNS).single();
-    if (updated.error) throw updated.error;
+    if (updated.error) {
+      // 方舟任务已经创建并计费，只是本地写入失败。必须保留 task id，
+      // 否则这条任务永远不会被轮询，用户会白白损失一次生成。
+      console.error("Failed to persist provider task id", { jobId: created.data.id, code: updated.error.code });
+      return { ...created.data, status: "generating", progress: 5, external_task_id: externalTaskId };
+    }
     return updated.data;
   } catch (error) {
-    const message = error instanceof Error ? error.message : `${providerLabel(provider)} 任务创建失败`;
+    const message = toUserMessage(error, `${providerLabel(provider)} 任务创建失败，请重试。`);
     const failed = await supabase.from("video_jobs").update({ status: "failed", error_message: message }).eq("id", created.data.id).select(JOB_COLUMNS).single();
     if (failed.error) throw failed.error;
     return failed.data;
@@ -113,8 +118,10 @@ export async function GET(request: Request) {
     }
 
     // 提交过程被中断、从未拿到 Provider 任务 ID 的记录不应一直显示“排队中”。
+    // 只在最近 24 小时内处理，避免每次列表请求都重复更新时间很久的旧记录。
+    const staleBefore = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     for (const job of rows) {
-      if (!isStrandedQueuedJob(job)) continue;
+      if (!isStrandedQueuedJob(job) || job.created_at < staleBefore) continue;
       const failed = await supabase.from("video_jobs").update({ status: "failed", error_message: "任务创建未完成，请重新生成。" }).eq("id", job.id).select(JOB_COLUMNS).single();
       if (!failed.error) polled.set(job.id, failed.data);
     }

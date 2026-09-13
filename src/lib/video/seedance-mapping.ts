@@ -145,3 +145,16 @@ export function failureMessage(providerStatus: string, payload: Record<string, u
   if (/model|access|开通/.test(hints)) return "Seedance 2.0 尚未开通。";
   return "视频生成失败，请重试。";
 }
+
+/**
+ * 创建任务时**只**对限流做重试。视频任务很贵，创建请求超时或返回 5xx 时都无法确定
+ * 方舟是否已经受理并计费，因此一律不重试，避免一次点击产生两条付费任务。
+ */
+export function shouldRetryCreate(error: unknown) {
+  return error instanceof SeedanceError && error.code === "ARK_QUOTA";
+}
+
+/** 查询任务没有副作用，因此 5xx 与限流都可以安全重试。 */
+export function shouldRetryQuery(error: unknown) {
+  return error instanceof SeedanceError && (error.code === "ARK_UNAVAILABLE" || error.code === "ARK_QUOTA");
+}

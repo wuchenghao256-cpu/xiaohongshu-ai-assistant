@@ -46,37 +46,43 @@ export async function listProviderConfigs(userId: string): Promise<SafeProviderC
 export async function getEnabledProviderConfig(userId: string, category: ProviderCategory): Promise<ProviderRuntimeConfig | null> {
   const row = await readRow(userId, [["category", category], ["enabled", "true"]]);
   if (!row) return null;
-  const apiKey = await resolveApiKey(userId, row);
-  if (!apiKey) return null;
   return {
     provider: row.provider, model: row.model, qualityModel: row.quality_model ?? undefined,
-    baseUrl: row.base_url || (ARK_PROVIDERS.includes(row.provider) ? DEFAULT_ARK_BASE_URL : row.base_url), apiKey,
+    baseUrl: row.base_url || (ARK_PROVIDERS.includes(row.provider) ? DEFAULT_ARK_BASE_URL : row.base_url),
+    apiKey: resolveApiKey(row),
   };
 }
 
-/** True when an enabled Ark key exists for Seedream, meaning the video provider needs no second key. */
+/** 已保存过 Seedream 的 Ark Key 时，视频 Provider 不需要用户再填一次密钥。 */
 export async function hasReusableArkKey(userId: string): Promise<boolean> {
-  const row = await readRow(userId, [["category", "image"], ["provider", "seedream"], ["enabled", "true"]]);
+  const row = await readRow(userId, [["category", "image"], ["provider", "seedream"]]);
   return Boolean(row?.api_key_encrypted);
 }
 
-async function resolveApiKey(userId: string, row: ConfigRow) {
-  if (row.api_key_encrypted) return decryptProviderSecret(row.api_key_encrypted);
-  if (!ARK_PROVIDERS.includes(row.provider)) return null;
-  const donor = await readRow(userId, [["provider", row.provider]]);
-  return donor?.api_key_encrypted ? decryptProviderSecret(donor.api_key_encrypted) : null;
+/** api_key_encrypted 为 NOT NULL，因此每行都自带密钥；直接解密即可。 */
+function resolveApiKey(row: ConfigRow) {
+  return decryptProviderSecret(row.api_key_encrypted);
+}
+
+/**
+ * 保存时留空 API Key 的取值顺序：先复用该 Provider 自己已保存的密钥，
+ * 再回退到火山方舟的其它入口（图片 Seedream ↔ 视频 Seedance 共用同一把 Ark Key）。
+ * 顺序很关键：否则在一条记录上清空密钥会覆盖掉另一条已有的密钥。
+ */
+async function findArkKeyFor(userId: string, input: { category: ProviderCategory; provider: ProviderName }) {
+  const own = await readRow(userId, [["category", input.category], ["provider", input.provider]]);
+  if (own?.api_key_encrypted) return own.api_key_encrypted;
+  if (!ARK_PROVIDERS.includes(input.provider)) return undefined;
+  for (const provider of ARK_PROVIDERS) {
+    const donor = await readRow(userId, [["provider", provider]]);
+    if (donor?.api_key_encrypted) return donor.api_key_encrypted;
+  }
+  return undefined;
 }
 
 export async function saveProviderConfig(userId: string, input: { category: ProviderCategory; provider: ProviderName; model: string; qualityModel?: string; baseUrl: string; apiKey?: string; enabled: boolean }) {
   const service = await createClient();
-  const existing = await readRow(userId, [["category", input.category], ["provider", input.provider]]);
-  // 火山方舟：未填新密钥时复用已保存的图片（Seedream）Ark Key，不让用户重复填写同一把密钥。
-  const donor = !input.apiKey && !existing?.api_key_encrypted && ARK_PROVIDERS.includes(input.provider)
-    ? await readRow(userId, [["category", "image"], ["provider", "seedream"]])
-    : null;
-  const encrypted = input.apiKey
-    ? encryptProviderSecret(input.apiKey)
-    : existing?.api_key_encrypted ?? donor?.api_key_encrypted;
+  const encrypted = input.apiKey ? encryptProviderSecret(input.apiKey) : await findArkKeyFor(userId, input);
   if (!encrypted) throw new Error("API_KEY_REQUIRED");
   const { error } = await service.from("ai_provider_configs").upsert({
     user_id: userId, category: input.category, provider: input.provider,

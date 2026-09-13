@@ -1,9 +1,12 @@
 import "server-only";
 import type { ProviderRuntimeConfig } from "@/lib/providers/types";
+import { toUserMessage } from "@/lib/video/errors";
 import { getRunwayTask, createRunwayTask } from "@/lib/video/runway";
 import { createSeedanceTask, getSeedanceTask, type SeedanceStatus } from "@/lib/video/seedance";
 import type { VideoJobInput } from "@/lib/video/types";
 import { buildVideoPrompt } from "@/lib/video/prompts";
+
+export { toUserMessage };
 
 export const VOLCENGINE_MODEL = "doubao-seedance-2-0-260128";
 export const RUNWAY_DEFAULT_MODEL = "gen4_turbo";

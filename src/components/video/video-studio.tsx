@@ -59,6 +59,8 @@ export function VideoStudio({
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [creating, setCreating] = useState(false);
+  // 正在处理的任务操作，用于禁用按钮，避免连点产生两个付费任务。
+  const [acting, setActing] = useState<string | null>(null);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [duration, setDuration] = useState(10);
   const [orientation, setOrientation] = useState<"landscape" | "portrait">("portrait");
@@ -171,14 +173,26 @@ export function VideoStudio({
   }
 
   async function action(job: VideoJob, name: "regenerate" | "save") {
-    const response = await fetch(`/api/video-jobs/${job.id}/${name}`, { method: "POST" });
-    const data = (await response.json()) as { job?: VideoJob; error?: string };
-    if (!response.ok) {
-      toast.error(data.error ?? "操作失败");
-      return;
+    if (acting) return;
+    if (name === "regenerate" && !window.confirm("重新生成会创建一个新的付费视频任务并再次消耗额度，确认继续？")) return;
+    setActing(`${job.id}:${name}`);
+    try {
+      const response = await fetch(`/api/video-jobs/${job.id}/${name}`, {
+        method: "POST",
+        ...(name === "regenerate"
+          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) }
+          : {}),
+      });
+      const data = (await response.json()) as { job?: VideoJob; error?: string };
+      if (!response.ok) {
+        toast.error(data.error ?? "操作失败");
+        return;
+      }
+      toast.success(name === "save" ? "已保存到作品库" : "已创建重新生成任务");
+      await refreshJobs();
+    } finally {
+      setActing(null);
     }
-    toast.success(name === "save" ? "已保存到作品库" : "已创建重新生成任务");
-    await refreshJobs();
   }
 
   const uploadLabel =
@@ -440,13 +454,13 @@ export function VideoStudio({
                     <video className="mt-4 aspect-video w-full rounded-md bg-black" src={job.output_url} controls playsInline />
                   ) : null}
                   <div className="mt-4 flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => void action(job, "regenerate")}>
-                      <RefreshCw />
+                    <Button size="sm" variant="outline" disabled={acting !== null} onClick={() => void action(job, "regenerate")}>
+                      {acting === `${job.id}:regenerate` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                       重新生成
                     </Button>
                     {job.status === "completed" && !job.saved ? (
-                      <Button size="sm" onClick={() => void action(job, "save")}>
-                        <Save />
+                      <Button size="sm" disabled={acting !== null} onClick={() => void action(job, "save")}>
+                        {acting === `${job.id}:save` ? <Loader2 className="animate-spin" /> : <Save />}
                         保存到作品库
                       </Button>
                     ) : null}
