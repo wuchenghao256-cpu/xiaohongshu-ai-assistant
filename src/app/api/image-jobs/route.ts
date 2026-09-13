@@ -37,10 +37,10 @@ async function markBatchFatal(supabase: ServerSupabase, batchId: string, error: 
 }
 
 async function processBatch(input: z.infer<typeof createSchema>, batchId: string, children: ChildRow[], supportsOutputCount: boolean, supabase: ServerSupabase, requestUrl: string, cookie: string) {
-  const generate = async (count: number) => {
+  const generate = async (count: number, position?: number) => {
     const response = await fetch(new URL("/api/images/generate", requestUrl), {
       method: "POST", headers: { "Content-Type": "application/json", cookie },
-      body: JSON.stringify({ ...input, count }), cache: "no-store",
+      body: JSON.stringify({ ...input, count, position }), cache: "no-store",
     });
     const data = await response.json() as { assets?: Array<{ id: string }>; error?: string };
     if (!response.ok || !data.assets) throw new GenerateRequestError(data.error ?? "图片生成失败", response.status);
@@ -54,7 +54,7 @@ async function processBatch(input: z.infer<typeof createSchema>, batchId: string
       const assets = await withExponentialRetry(async (attempt) => {
         batchAttempt = attempt;
         await Promise.all(children.map((job) => updateChild(supabase, job, "generating", attempt)));
-        return generate(4);
+        return generate(4, children[0].position);
       }, retriable, { maxAttempts: 3 });
       await Promise.all(children.map((job, index) => updateChild(supabase, job, "completed", batchAttempt, assets[index].id)));
       await finishBatch(supabase, batchId);
@@ -69,7 +69,7 @@ async function processBatch(input: z.infer<typeof createSchema>, batchId: string
       const asset = await withExponentialRetry(async (currentAttempt) => {
         attempt = currentAttempt;
         await updateChild(supabase, job, "generating", currentAttempt);
-        return (await generate(1))[0];
+        return (await generate(1, job.position))[0];
       }, retriable, { maxAttempts: 3 });
       await updateChild(supabase, job, "completed", attempt, asset.id);
     } catch (error) {
@@ -140,6 +140,11 @@ export async function PATCH(request: Request) {
     if (reset.error) throw reset.error;
     const parent = await supabase.from("image_batch_jobs").update({ status: "queued", failed_count: 0 }).eq("id", batchId).select("request_snapshot").single();
     if (parent.error) throw parent.error;
+    if (!reset.data.length) {
+      // Nothing was actually failed; recompute the batch rather than leaving it pinned to "queued".
+      await finishBatch(supabase, batchId);
+      return Response.json(await presentBatch(supabase, batchId));
+    }
     const state = await presentBatch(supabase, batchId);
     const input = createSchema.parse(parent.data.request_snapshot);
     const provider = await getImageGenerationProvider(user.id);

@@ -43,6 +43,7 @@ export const modelProductImageRequestSchema = z.object({
   productFocus: z.enum(modelProductFocusOptions),
   generationMode: z.enum(modelGenerationModes).default("precise_edit"),
   creativeVariation: z.enum(creativeVariationLevels).default("medium"),
+  position: z.number().int().min(1).max(4).optional(),
 });
 
 export const productImageRequestSchema = z.union([

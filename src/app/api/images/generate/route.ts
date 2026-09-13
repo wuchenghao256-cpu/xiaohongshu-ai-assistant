@@ -167,6 +167,9 @@ export async function POST(request: Request) {
     }
 
     const assets = [];
+    // A batch child asks for one image at a time, so its own request index is always 0.
+    // Offset by the child's batch position to keep generated filenames unique.
+    const nameOffset = "position" in input ? (input.position ?? 1) - 1 : 0;
     for (const [index, generatedImage] of generated.entries()) {
       const image = await materializeImage(generatedImage);
       const extension = extensionByMime[image.mimeType];
@@ -184,7 +187,7 @@ export async function POST(request: Request) {
         user_id: user.id,
         task_id: input.taskId,
         storage_path: storagePath,
-        original_name: sanitizeImageFilename(`${assetNamePrefix}-${index + 1}.${extension}`, image.mimeType),
+        original_name: sanitizeImageFilename(`${assetNamePrefix}-${nameOffset + index + 1}.${extension}`, image.mimeType),
         mime_type: image.mimeType,
         size_bytes: image.bytes.byteLength,
         selected_for_publishing: true,
