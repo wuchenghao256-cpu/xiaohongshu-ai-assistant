@@ -1,8 +1,12 @@
 import { jsonError } from "@/lib/http";
-import { getImageGenerationProvider } from "@/lib/image-ai/client";
+import { buildModelImagePrompt } from "@/lib/ai/build-model-image-prompt";
+import { getModelImageTemplate } from "@/lib/ai/image-template-config";
+import { generateModelProductImages, generateProductImages } from "@/lib/image-ai/client";
 import { buildProductImagePrompt } from "@/lib/image-ai/image-prompts";
+import { prepareProductReferences, type ReferenceAssetRecord } from "@/lib/image-ai/prepare-references";
 import { ImageGenerationError } from "@/lib/image-ai/provider";
 import { productImageRequestSchema, type GeneratedImage } from "@/lib/image-ai/types";
+import { sanitizeImageFilename } from "@/lib/images/image-files";
 import { requireUser } from "@/lib/supabase/auth";
 
 export const maxDuration = 300;
@@ -78,7 +82,6 @@ export async function POST(request: Request) {
   try {
     const input = productImageRequestSchema.parse(await request.json());
     const { user, supabase } = await requireUser();
-    const provider = getImageGenerationProvider();
 
     const taskResult = await supabase
       .from("content_tasks")
@@ -99,7 +102,7 @@ export async function POST(request: Request) {
     const referenceResult = input.referenceAssetIds.length
       ? await supabase
           .from("assets")
-          .select("id, storage_path, mime_type")
+          .select("id, storage_bucket, storage_path, mime_type, size_bytes, width, height")
           .eq("task_id", input.taskId)
           .in("id", input.referenceAssetIds)
       : { data: [], error: null };
@@ -108,27 +111,55 @@ export async function POST(request: Request) {
       return Response.json({ error: "部分参考图片不存在或无权访问。" }, { status: 403 });
     }
 
-    const references = await Promise.all((referenceResult.data ?? []).map(async (asset) => {
-      const signed = await supabase.storage.from("product-assets").createSignedUrl(asset.storage_path, 600);
-      if (signed.error) {
-        throw new ImageGenerationError("参考图片读取失败，请重新上传。", "STORAGE_FAILED", 502);
-      }
-      return { url: signed.data.signedUrl, mimeType: asset.mime_type };
-    }));
+    const references = await prepareProductReferences({
+      requestedIds: input.referenceAssetIds,
+      assets: (referenceResult.data ?? []) as ReferenceAssetRecord[],
+      createSignedUrl: async (asset) => {
+        const signed = await supabase.storage.from(asset.storage_bucket).createSignedUrl(asset.storage_path, 600);
+        if (signed.error) {
+          throw new ImageGenerationError("参考图片读取失败，请重新上传。", "STORAGE_FAILED", 502);
+        }
+        return signed.data.signedUrl;
+      },
+    });
 
-    const prompt = buildProductImagePrompt({
-      productName: taskResult.data.product_name,
-      scene: input.scene,
-      sceneDescription: input.sceneDescription,
-      imageStyle: input.imageStyle,
-      hasReference: references.length > 0,
-    });
-    const generated = await provider.generateProductImages({
-      prompt,
-      aspectRatio: input.aspectRatio,
-      count: input.count,
-      references,
-    });
+    let generated: GeneratedImage[];
+    let assetNamePrefix = "AI生成商品图";
+    if ("mode" in input) {
+      const template = getModelImageTemplate(input.templateId);
+      if (!template) return Response.json({ error: "所选模特商品图模板不存在。" }, { status: 400 });
+      const prompt = buildModelImagePrompt({
+        template,
+        productName: taskResult.data.product_name,
+        productCategory: input.productCategory,
+        gender: input.gender,
+        style: input.style,
+        productFocus: input.productFocus,
+        hasReference: references.length > 0,
+      });
+      generated = await generateModelProductImages({
+        prompt: prompt.positivePrompt,
+        negativePrompt: prompt.negativePrompt,
+        aspectRatio: input.aspectRatio,
+        count: input.count,
+        references,
+      });
+      assetNamePrefix = `AI模特商品图-${template.name}`;
+    } else {
+      const prompt = buildProductImagePrompt({
+        productName: taskResult.data.product_name,
+        scene: input.scene,
+        sceneDescription: input.sceneDescription,
+        imageStyle: input.imageStyle,
+        hasReference: references.length > 0,
+      });
+      generated = await generateProductImages({
+        prompt,
+        aspectRatio: input.aspectRatio,
+        count: input.count,
+        references,
+      });
+    }
     if (generated.length !== input.count) {
       throw new ImageGenerationError("图片生成数量与请求不一致，请重试。", "INVALID_RESPONSE", 502);
     }
@@ -151,9 +182,10 @@ export async function POST(request: Request) {
         user_id: user.id,
         task_id: input.taskId,
         storage_path: storagePath,
-        original_name: `AI生成商品图-${index + 1}.${extension}`,
+        original_name: sanitizeImageFilename(`${assetNamePrefix}-${index + 1}.${extension}`, image.mimeType),
         mime_type: image.mimeType,
         size_bytes: image.bytes.byteLength,
+        selected_for_publishing: true,
       }).select("id, storage_path, original_name, mime_type, size_bytes").single();
       if (asset.error) {
         throw new ImageGenerationError("生成图片记录保存失败，请稍后重试。", "STORAGE_FAILED", 502);

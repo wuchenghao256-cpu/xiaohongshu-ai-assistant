@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { jsonError } from "@/lib/http";
+import { sanitizeImageFilename } from "@/lib/images/image-files";
 import { requireUser } from "@/lib/supabase/auth";
 
 const assetSchema = z.object({
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
       user_id: user.id,
       task_id: input.taskId,
       storage_path: input.storagePath,
-      original_name: input.originalName,
+      original_name: sanitizeImageFilename(input.originalName, input.mimeType),
       mime_type: input.mimeType,
       size_bytes: input.sizeBytes,
       width: input.width ?? null,

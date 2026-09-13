@@ -14,6 +14,7 @@ const imageResponseSchema = z.object({
 const sizeByRatio: Record<ImageAspectRatio, string> = {
   "1:1": "2048x2048",
   "3:4": "1728x2304",
+  "4:5": "1728x2160",
   "4:3": "2304x1728",
   "9:16": "1440x2560",
   "16:9": "2560x1440",
@@ -29,6 +30,8 @@ function imageEndpoint(baseUrl: string) {
 class VolcengineSeedreamProvider implements ImageGenerationProvider {
   readonly name = "volcengine-seedream";
   readonly model: string;
+  readonly qualityPreset = "high";
+  readonly maxOutputs = 4;
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
@@ -59,7 +62,13 @@ class VolcengineSeedreamProvider implements ImageGenerationProvider {
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: input.count > 1 ? `${input.prompt}\n这是第 ${index + 1} 张，请在不改变商品的前提下调整构图细节。` : input.prompt,
+          prompt: [
+            input.prompt,
+            input.negativePrompt ? `Avoid: ${input.negativePrompt}.` : "",
+            input.count > 1
+              ? `This is image ${index + 1} of ${input.count}. Vary only the composition details while keeping the same reference product and template direction.`
+              : "",
+          ].filter(Boolean).join("\n"),
           ...(input.references.length
             ? {
                 image: input.references.length === 1
@@ -123,4 +132,16 @@ export function getImageGenerationProvider(): ImageGenerationProvider {
 
 export function generateProductImages(input: ImageGenerationInput) {
   return getImageGenerationProvider().generateProductImages(input);
+}
+
+export function generateModelProductImages(input: ImageGenerationInput) {
+  const provider = getImageGenerationProvider();
+  if (input.count > provider.maxOutputs) {
+    throw new ImageGenerationError(
+      `当前图片生成服务单次最多生成 ${provider.maxOutputs} 张图片。`,
+      "REQUEST_FAILED",
+      400,
+    );
+  }
+  return provider.generateProductImages(input);
 }

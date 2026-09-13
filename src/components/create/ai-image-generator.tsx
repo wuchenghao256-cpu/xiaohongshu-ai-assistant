@@ -6,10 +6,20 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { imageAspectRatios, imageSceneOptions, type ImageAspectRatio, type ImageScene } from "@/lib/image-ai/types";
+import {
+  modelGenderLabels,
+  modelImageAspectRatios,
+  modelImageTemplates,
+  modelProductCategoryLabels,
+  modelProductFocusLabels,
+  modelStyleLabels,
+  type ModelGender,
+  type ModelImageAspectRatio,
+  type ModelProductCategory,
+  type ModelProductFocus,
+  type ModelStyle,
+} from "@/lib/ai/image-template-config";
 
 export type GeneratedAssetRecord = {
   id: string;
@@ -19,29 +29,56 @@ export type GeneratedAssetRecord = {
   signedUrl: string;
 };
 
+const selectableStyles: ModelStyle[] = ["luxury", "street", "minimalist"];
+const generationCounts = [1, 2, 4] as const;
+
 export function AiImageGenerator({
   configured,
   disabled,
   referenceAssetIds,
+  existingAssetCount,
   ensureTask,
   onGenerated,
 }: {
   configured: boolean;
   disabled: boolean;
   referenceAssetIds: string[];
+  existingAssetCount: number;
   ensureTask: () => Promise<string>;
   onGenerated: (assets: GeneratedAssetRecord[]) => void;
 }) {
-  const [scene, setScene] = useState<ImageScene>("xiaohongshu");
-  const [sceneDescription, setSceneDescription] = useState("");
-  const [imageStyle, setImageStyle] = useState("自然真实、柔和自然光、适合小红书");
-  const [aspectRatio, setAspectRatio] = useState<ImageAspectRatio>("3:4");
-  const [count, setCount] = useState(1);
+  const defaultTemplate = modelImageTemplates.find((template) => template.isDefault) ?? modelImageTemplates[0];
+  const [templateId, setTemplateId] = useState(defaultTemplate.id);
+  const [productCategory, setProductCategory] = useState<ModelProductCategory>(defaultTemplate.productCategory);
+  const [gender, setGender] = useState<ModelGender>(defaultTemplate.gender);
+  const [style, setStyle] = useState<ModelStyle>(defaultTemplate.style);
+  const [aspectRatio, setAspectRatio] = useState<ModelImageAspectRatio>(defaultTemplate.aspectRatio);
+  const [count, setCount] = useState<1 | 2 | 4>(defaultTemplate.shotsCountDefault);
+  const [productFocus, setProductFocus] = useState<ModelProductFocus>("product");
   const [generating, setGenerating] = useState(false);
+  const selectedTemplate = modelImageTemplates.find((template) => template.id === templateId) ?? defaultTemplate;
+  const exceedsAssetLimit = existingAssetCount + count > 9;
+
+  function applyTemplate(nextTemplateId: string | null) {
+    if (!nextTemplateId) return;
+    const template = modelImageTemplates.find((item) => item.id === nextTemplateId);
+    if (!template) return;
+    setTemplateId(template.id);
+    setProductCategory(template.productCategory);
+    setGender(template.gender);
+    setStyle(template.style);
+    setAspectRatio(template.aspectRatio);
+    setCount(template.shotsCountDefault);
+    setProductFocus(template.framing === "product_focus" ? "product" : "balanced");
+  }
 
   async function generate() {
-    if (sceneDescription.trim().length < 5) {
-      toast.error("请具体描述希望生成的场景");
+    if (!referenceAssetIds.length) {
+      toast.error("请先上传并选择至少一张商品参考图");
+      return;
+    }
+    if (exceedsAssetLimit) {
+      toast.error(`当前还可保存 ${Math.max(0, 9 - existingAssetCount)} 张图片，请减少生成张数`);
       return;
     }
     setGenerating(true);
@@ -51,19 +88,22 @@ export function AiImageGenerator({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode: "model-template",
           taskId,
           referenceAssetIds,
-          scene,
-          sceneDescription,
-          imageStyle,
+          templateId,
+          productCategory,
+          gender,
+          style,
           aspectRatio,
           count,
+          productFocus,
         }),
       });
       const data = await response.json() as { assets?: GeneratedAssetRecord[]; error?: string };
       if (!response.ok || !data.assets) throw new Error(data.error || "图片生成失败");
       onGenerated(data.assets);
-      toast.success(`已生成并保存 ${data.assets.length} 张商品图`);
+      toast.success(`已生成并保存 ${data.assets.length} 张 AI 模特商品图`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "图片生成失败，请稍后重试");
     } finally {
@@ -73,58 +113,76 @@ export function AiImageGenerator({
 
   return <Card className="mt-3 bg-muted/20 shadow-none">
     <CardHeader className="pb-3">
-      <CardTitle className="text-base">AI 生成商品图</CardTitle>
+      <CardTitle className="text-base">AI 模特商品图</CardTitle>
       <CardDescription>
         {configured
           ? referenceAssetIds.length
-            ? `将优先参考已选择的 ${referenceAssetIds.length} 张原商品图`
-            : "未选择参考图，将使用文本生成图片"
+            ? `高端时尚商品图模板 · 已选择 ${referenceAssetIds.length} 张商品参考图`
+            : "请先上传并选择商品参考图，再使用高端时尚商品图模板"
           : "请先在服务端配置图片生成模型"}
       </CardDescription>
     </CardHeader>
-    <CardContent className="grid gap-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field>
-          <FieldLabel htmlFor="image-scene">场景</FieldLabel>
-          <Select value={scene} onValueChange={(value) => value && setScene(value as ImageScene)}>
-            <SelectTrigger id="image-scene" className="w-full"><SelectValue>{imageSceneOptions.find((option) => option.value === scene)?.label}</SelectValue></SelectTrigger>
-            <SelectContent>{imageSceneOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="image-style">图片风格</FieldLabel>
-          <Input id="image-style" value={imageStyle} onChange={(event) => setImageStyle(event.target.value)} />
-        </Field>
-      </div>
+    <CardContent className="grid min-w-0 gap-4">
       <Field>
-        <FieldLabel htmlFor="image-scene-description">场景描述</FieldLabel>
-        <Textarea
-          id="image-scene-description"
-          value={sceneDescription}
-          onChange={(event) => setSceneDescription(event.target.value)}
-          placeholder="例如：生成一张自然光咖啡店桌面场景的小红书风商品照片"
-        />
+        <FieldLabel htmlFor="model-image-template">模板选择</FieldLabel>
+        <Select value={templateId} onValueChange={applyTemplate}>
+          <SelectTrigger id="model-image-template" className="w-full min-w-0"><SelectValue>{selectedTemplate.name}</SelectValue></SelectTrigger>
+          <SelectContent>{modelImageTemplates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">选择模板后会自动回填模特、风格、比例和默认生成张数。</p>
       </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
+
+      <div className="grid min-w-0 gap-4 sm:grid-cols-2">
         <Field>
-          <FieldLabel htmlFor="image-aspect-ratio">图片比例</FieldLabel>
-          <Select value={aspectRatio} onValueChange={(value) => value && setAspectRatio(value as ImageAspectRatio)}>
-            <SelectTrigger id="image-aspect-ratio" className="w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>{imageAspectRatios.map((ratio) => <SelectItem key={ratio} value={ratio}>{ratio}</SelectItem>)}</SelectContent>
+          <FieldLabel htmlFor="model-product-category">商品类目</FieldLabel>
+          <Select value={productCategory} onValueChange={(value) => value && setProductCategory(value as ModelProductCategory)}>
+            <SelectTrigger id="model-product-category" className="w-full"><SelectValue>{modelProductCategoryLabels[productCategory]}</SelectValue></SelectTrigger>
+            <SelectContent>{(["bag", "shoes"] as const).map((value) => <SelectItem key={value} value={value}>{modelProductCategoryLabels[value]}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
         <Field>
-          <FieldLabel htmlFor="image-count">生成数量</FieldLabel>
-          <Select value={String(count)} onValueChange={(value) => value && setCount(Number(value))}>
-            <SelectTrigger id="image-count" className="w-full"><SelectValue>{count} 张</SelectValue></SelectTrigger>
-            <SelectContent>{[1, 2, 3, 4].map((value) => <SelectItem key={value} value={String(value)}>{value} 张</SelectItem>)}</SelectContent>
+          <FieldLabel htmlFor="model-gender">模特性别</FieldLabel>
+          <Select value={gender} onValueChange={(value) => value && setGender(value as ModelGender)}>
+            <SelectTrigger id="model-gender" className="w-full"><SelectValue>{modelGenderLabels[gender]}</SelectValue></SelectTrigger>
+            <SelectContent>{(["female", "male"] as const).map((value) => <SelectItem key={value} value={value}>{modelGenderLabels[value]}</SelectItem>)}</SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="model-style">风格</FieldLabel>
+          <Select value={style} onValueChange={(value) => value && setStyle(value as ModelStyle)}>
+            <SelectTrigger id="model-style" className="w-full"><SelectValue>{modelStyleLabels[style]}</SelectValue></SelectTrigger>
+            <SelectContent>{selectableStyles.map((value) => <SelectItem key={value} value={value}>{modelStyleLabels[value]}</SelectItem>)}</SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="model-aspect-ratio">输出比例</FieldLabel>
+          <Select value={aspectRatio} onValueChange={(value) => value && setAspectRatio(value as ModelImageAspectRatio)}>
+            <SelectTrigger id="model-aspect-ratio" className="w-full"><SelectValue>{aspectRatio}</SelectValue></SelectTrigger>
+            <SelectContent>{modelImageAspectRatios.map((ratio) => <SelectItem key={ratio} value={ratio}>{ratio}</SelectItem>)}</SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="model-image-count">生成张数</FieldLabel>
+          <Select value={String(count)} onValueChange={(value) => value && setCount(Number(value) as 1 | 2 | 4)}>
+            <SelectTrigger id="model-image-count" className="w-full"><SelectValue>{count} 张</SelectValue></SelectTrigger>
+            <SelectContent>{generationCounts.map((value) => <SelectItem key={value} value={String(value)} disabled={existingAssetCount + value > 9}>{value} 张</SelectItem>)}</SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="model-product-focus">商品展示重点</FieldLabel>
+          <Select value={productFocus} onValueChange={(value) => value && setProductFocus(value as ModelProductFocus)}>
+            <SelectTrigger id="model-product-focus" className="w-full"><SelectValue>{modelProductFocusLabels[productFocus]}</SelectValue></SelectTrigger>
+            <SelectContent>{(["product", "balanced"] as const).map((value) => <SelectItem key={value} value={value}>{modelProductFocusLabels[value]}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
       </div>
-      <Button type="button" variant="outline" onClick={generate} disabled={!configured || disabled || generating}>
+
+      {exceedsAssetLimit ? <p className="text-sm text-destructive">当前任务最多保存 9 张图片，请选择更少的生成张数。</p> : null}
+      <Button type="button" variant="outline" onClick={generate} disabled={!configured || disabled || generating || !referenceAssetIds.length || exceedsAssetLimit}>
         {generating ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <WandSparkles data-icon="inline-start" />}
-        {generating ? "正在生成并保存…" : "AI 生成商品图"}
+        {generating ? "正在生成并保存…" : `生成 ${count} 张 AI 模特商品图`}
       </Button>
+      <p className="text-xs leading-5 text-muted-foreground">生成结果不会添加水印，将自动保存到素材库并勾选为发布图片。</p>
     </CardContent>
   </Card>;
 }
