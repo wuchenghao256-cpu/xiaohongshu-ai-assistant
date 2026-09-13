@@ -61,6 +61,7 @@ import {
   AiImageGenerator,
   type GeneratedAssetRecord,
 } from "@/components/create/ai-image-generator";
+import { DraftPanel } from "@/components/create/draft-panel";
 import type { ContentTemplate } from "@/lib/templates/types";
 
 const formSchema = generationFieldsSchema.superRefine((data, context) => {
@@ -73,14 +74,21 @@ const formSchema = generationFieldsSchema.superRefine((data, context) => {
 });
 type FormInput = z.infer<typeof formSchema>;
 
+/** 素材库「插入当前创作」带过来的素材，服务端已经签好名。 */
+export type CreateWorkspaceInsertAsset = WorkspaceImageAsset & { taskId: string };
+
 export function CreateWorkspace({
   configured,
   imageAiConfigured,
   initialTemplates,
+  initialTaskId,
+  initialInsertAsset,
 }: {
   configured: boolean;
   imageAiConfigured: boolean;
   initialTemplates: ContentTemplate[];
+  initialTaskId?: string;
+  initialInsertAsset?: CreateWorkspaceInsertAsset;
 }) {
   const defaultTemplate = initialTemplates.find(
     (template) => template.is_default,
@@ -88,9 +96,14 @@ export function CreateWorkspace({
   const defaultKnownStyle = writingStyles.find(
     (style) => style === defaultTemplate?.tone,
   );
-  const [taskId, setTaskId] = useState<string>();
-  const [assets, setAssets] = useState<WorkspaceImageAsset[]>([]);
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [taskId, setTaskId] = useState<string | undefined>(initialTaskId);
+  // 素材库插入的素材只进入初始状态；后续的上传/删除仍然是普通的 assets 状态。
+  const [assets, setAssets] = useState<WorkspaceImageAsset[]>(
+    initialInsertAsset ? [initialInsertAsset] : [],
+  );
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(
+    initialInsertAsset ? [initialInsertAsset.id] : [],
+  );
   const [variants, setVariants] = useState<VariantRecord[]>([]);
   const [uploading, setUploading] = useState(false);
   const [postId, setPostId] = useState<string>();
@@ -102,11 +115,13 @@ export function CreateWorkspace({
   const [templateName, setTemplateName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
   useEffect(() => {
+    if (initialTaskId) return;
     const savedTaskId = window.sessionStorage.getItem("xhs-current-content-task");
     if (!savedTaskId) return;
+    // 从草稿箱/素材库带 ?taskId= 进来时以 URL 为准：sessionStorage 里是上一次的草稿。
     const timer = window.setTimeout(() => setTaskId(savedTaskId), 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [initialTaskId]);
 
   useEffect(() => {
     if (taskId) window.sessionStorage.setItem("xhs-current-content-task", taskId);
@@ -131,6 +146,10 @@ export function CreateWorkspace({
   const selectedStyle = useWatch({ control: form.control, name: "style" });
   const referenceAssets = assets.filter((asset) => asset.kind === "uploaded");
   const generatedAssets = assets.filter((asset) => asset.kind === "generated");
+  const finalVariant = variants.find((variant) => variant.is_final) ?? variants[0];
+  // 草稿记录「一次生成现场」：参考图取第一张（主参考图），成图取第一张。
+  const draftSourceAssetId = referenceAssets[0]?.id;
+  const draftGeneratedAssetId = generatedAssets[0]?.id;
   function applyTemplate(template: ContentTemplate) {
     form.setValue("category", template.product_category ?? "");
     form.setValue("targetAudience", template.target_audience ?? "");
@@ -615,6 +634,16 @@ export function CreateWorkspace({
         </form>
       </section>
       <section className="min-w-0 bg-muted/20 p-4 sm:p-6">
+        <DraftPanel
+          key={`${taskId ?? "no-task"}:${draftGeneratedAssetId ?? "no-image"}`}
+          taskId={taskId}
+          sourceAssetId={draftSourceAssetId}
+          generatedAssetId={draftGeneratedAssetId}
+          body={finalVariant?.body ?? ""}
+          hashtags={finalVariant?.hashtags ?? []}
+          fallbackTitle={form.getValues("productName") || "商品图片草稿"}
+        />
+        <div className="my-6 border-t" />
         <GeneratedImagesPanel
           assets={generatedAssets}
           selectedAssetIds={selectedAssetIds}

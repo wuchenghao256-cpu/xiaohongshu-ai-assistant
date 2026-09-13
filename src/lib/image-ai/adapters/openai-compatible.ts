@@ -1,11 +1,19 @@
 import "server-only";
-import { z } from "zod";
-import { ImageGenerationError, type ImageGenerationProvider } from "@/lib/image-ai/provider";
+import { ImageGenerationError, isTimeoutError, logProviderFailure, providerHttpError, type ImageGenerationProvider } from "@/lib/image-ai/provider";
 import type { GeneratedImage, ImageAspectRatio, ImageGenerationInput } from "@/lib/image-ai/types";
 import type { ProviderRuntimeConfig } from "@/lib/providers/types";
+import { z } from "zod";
 
-const responseSchema = z.object({ data: z.array(z.object({ url: z.string().url().optional(), b64_json: z.string().min(1).optional() }).refine((v) => v.url || v.b64_json)).min(1) });
+const responseSchema = z.object({
+  data: z.array(z.object({
+    url: z.string().url().optional(),
+    b64_json: z.string().min(1).optional(),
+    // Seedream / Ark 会带上审核状态；有值且非空表示这张图被内容安全策略拦下。
+    finish_reason: z.string().optional(),
+  }).refine((value) => value.url || value.b64_json)).min(1),
+});
 const sizeByRatio: Record<ImageAspectRatio, string> = { "1:1": "2048x2048", "3:4": "1728x2304", "4:5": "1728x2160", "4:3": "2304x1728", "9:16": "1440x2560", "16:9": "2560x1440" };
+const REQUEST_TIMEOUT_MS = 150_000;
 
 export function imagesEndpoint(baseUrl: string) { const value = baseUrl.replace(/\/+$/, ""); return value.endsWith("/images/generations") ? value : `${value}/images/generations`; }
 
@@ -14,14 +22,35 @@ export class OpenAiCompatibleImageProvider implements ImageGenerationProvider {
   readonly supportsOutputCount: boolean;
   constructor(protected readonly config: ProviderRuntimeConfig, name = "custom") { this.name = name; this.model = config.model; this.supportsOutputCount = name === "openai"; }
   protected requestBody(input: ImageGenerationInput, index: number) { return { model: this.model, prompt: [input.prompt, input.negativePrompt ? `Avoid: ${input.negativePrompt}.` : "", input.count > 1 ? `Image ${index + 1} of ${input.count}; preserve the product and vary only composition.` : ""].filter(Boolean).join("\n"), ...(input.references.length ? { image: input.references.length === 1 ? input.references[0].url : input.references.map((item) => item.url) } : {}), size: sizeByRatio[input.aspectRatio], response_format: "url" }; }
+
   private async request(input: ImageGenerationInput, index: number, outputCount = 1): Promise<GeneratedImage[]> {
-    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 150_000);
+    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const startedAt = Date.now();
     try {
       const response = await fetch(imagesEndpoint(this.config.baseUrl), { method: "POST", headers: { Authorization: `Bearer ${this.config.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...this.requestBody(input, index), ...(outputCount > 1 ? { n: outputCount } : {}) }), signal: controller.signal, cache: "no-store" });
-      if (!response.ok) throw new ImageGenerationError(`图片生成服务请求失败（HTTP ${response.status}），请检查模型、接口或账户额度。`, "REQUEST_FAILED", 502);
-      const parsed = responseSchema.safeParse(await response.json()); if (!parsed.success) throw new ImageGenerationError("图片生成服务返回了无法识别的结果。", "INVALID_RESPONSE", 502); return parsed.data.data.map((item) => ({ url: item.url, b64Json: item.b64_json }));
-    } catch (error) { if (error instanceof ImageGenerationError) throw error; if (error instanceof Error && error.name === "AbortError") throw new ImageGenerationError("图片生成超时，请稍后重试。", "TIMEOUT", 504); throw new ImageGenerationError("无法连接图片生成服务，请检查接口地址或网络。", "REQUEST_FAILED", 502); } finally { clearTimeout(timer); }
+      if (!response.ok) {
+        // 必须读完响应体：Ark 会把 429 的限流原因和内容审核结论放在 body 里。
+        // 如果 body 无法读取（连接被切断），退化成按状态码分类，不能让它冒泡成 UNKNOWN。
+        let body = "";
+        try { body = await response.text(); } catch (readError) { logProviderFailure(this.name, readError, { phase: "read-error-body", status: response.status }); }
+        const failure = providerHttpError(response.status, body);
+        logProviderFailure(this.name, failure, { phase: "request", status: response.status, model: this.model, durationMs: Date.now() - startedAt, detail: failure.detail });
+        throw failure;
+      }
+      const parsed = responseSchema.safeParse(await response.json());
+      if (!parsed.success) throw new ImageGenerationError("图片生成服务返回了无法识别的结果。", "INVALID_RESPONSE", 502);
+      return parsed.data.data.map((item) => ({ url: item.url, b64Json: item.b64_json }));
+    } catch (error) {
+      if (error instanceof ImageGenerationError) throw error;
+      if (isTimeoutError(error)) {
+        logProviderFailure(this.name, error, { phase: "timeout", model: this.model, durationMs: Date.now() - startedAt, timeoutMs: REQUEST_TIMEOUT_MS });
+        throw new ImageGenerationError("图片生成超时，请稍后重试。", "TIMEOUT", 504);
+      }
+      logProviderFailure(this.name, error, { phase: "network", model: this.model, durationMs: Date.now() - startedAt });
+      throw new ImageGenerationError("无法连接图片生成服务，请检查接口地址或网络。", "REQUEST_FAILED", 502);
+    } finally { clearTimeout(timer); }
   }
+
   async generateProductImages(input: ImageGenerationInput) {
     if (this.supportsOutputCount && input.count > 1) return this.request(input, 0, input.count);
     return (await Promise.all(Array.from({ length: input.count }, (_, index) => this.request(input, index)))).flat();

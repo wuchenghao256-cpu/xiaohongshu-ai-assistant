@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   FileClock,
+  FileText,
   Images,
   LogOut,
   Menu,
@@ -19,7 +20,8 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/create", label: "创作", icon: PenLine },
-  { href: "/create#generated-images-title", label: "素材库", icon: Images },
+  { href: "/assets", label: "素材库", icon: Images },
+  { href: "/drafts", label: "草稿箱", icon: FileText },
   { href: "/video", label: "AI视频", icon: Video },
   { href: "/history", label: "历史记录", icon: FileClock },
   { href: "/publishing", label: "发布管理", icon: Send },

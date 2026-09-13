@@ -10,7 +10,7 @@ import {
   Radio,
   Send,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ImagePreviewGallery, ImagePreviewTrigger, type PreviewImage } from "@/components/images/image-preview-gallery";
 import { Badge } from "@/components/ui/badge";
@@ -76,16 +76,29 @@ export function PublishingCenter({
   initialPosts,
   capabilities,
   initialJobs,
+  initialPostId,
 }: {
   initialPosts: PublishingPost[];
   capabilities: PlatformCapabilityView[];
   initialJobs: PublishingJobView[];
+  initialPostId?: string;
 }) {
-  const [postId, setPostId] = useState(initialPosts[0]?.id ?? "");
+  const [postId, setPostId] = useState(
+    initialPostId && initialPosts.some((item) => item.id === initialPostId)
+      ? initialPostId
+      : (initialPosts[0]?.id ?? ""),
+  );
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(["xiaohongshu", "wechat_moments"]);
   const [jobs, setJobs] = useState(initialJobs);
   const [preparing, setPreparing] = useState(false);
   const post = useMemo(() => initialPosts.find((item) => item.id === postId), [initialPosts, postId]);
+
+  // 从草稿列表点「发布」会带着 ?postId= 跳进来，此时把焦点滚到发布按钮，
+  // 让「打开草稿 → 发布」这条路径不需要用户再找一次按钮。
+  useEffect(() => {
+    if (!initialPostId) return;
+    document.getElementById("publishing-actions")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [initialPostId]);
 
   function togglePlatform(platform: Platform) {
     setSelectedPlatforms((current) => current.includes(platform)
@@ -199,7 +212,7 @@ export function PublishingCenter({
       </div>
     </section>
 
-    <div className="z-10 flex flex-col gap-3 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:sticky sm:bottom-3 sm:flex-row sm:items-center sm:justify-between">
+    <div id="publishing-actions" className="z-10 flex flex-col gap-3 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:sticky sm:bottom-3 sm:flex-row sm:items-center sm:justify-between">
       <div><p className="text-sm font-medium">{post ? post.title : "尚未选择内容"}</p><p className="mt-0.5 text-xs text-muted-foreground">将为 {selectedPlatforms.length} 个平台分别创建任务，不会直接伪造发布成功。</p></div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button nativeButton={false} variant="outline" disabled={!post || !post.selectedImageCount} render={<a href={post ? `/api/posts/${post.id}/images.zip` : "#"} download="post-images.zip" />}><Download data-icon="inline-start" />一键下载全部图片 ZIP</Button>

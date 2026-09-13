@@ -1,6 +1,8 @@
 import { jsonError } from "@/lib/http";
 import { buildModelImagePrompt } from "@/lib/ai/build-model-image-prompt";
 import { getModelImageTemplate } from "@/lib/ai/image-template-config";
+import { getImageGenerationProvider } from "@/lib/image-ai/client";
+import { logImageFailure } from "@/lib/image-ai/failure";
 import { generateModelProductImages, generateProductImages } from "@/lib/image-ai/client";
 import { buildProductImagePrompt } from "@/lib/image-ai/image-prompts";
 import { prepareProductReferences, type ReferenceAssetRecord } from "@/lib/image-ai/prepare-references";
@@ -76,12 +78,29 @@ async function materializeImage(image: GeneratedImage): Promise<PersistableImage
   }
 }
 
+/**
+ * Supabase 的 PostgrestError / StorageError 只是普通对象，不是 Error 实例，
+ * 直接 throw 会让日志丢失真正原因（例如配额超限、列不存在）。
+ */
+function withContext(error: unknown, context: string) {
+  if (error instanceof Error) {
+    error.message = `${context}: ${error.message}`;
+    return error;
+  }
+  return new Error(`${context}: ${JSON.stringify(error).slice(0, 400)}`);
+}
+
 export async function POST(request: Request) {
   const uploadedPaths: string[] = [];
   const insertedAssetIds: string[] = [];
+  const logContext: Record<string, unknown> = {};
   try {
     const input = productImageRequestSchema.parse(await request.json());
     const { user, supabase } = await requireUser();
+    logContext.userId = user.id;
+    logContext.taskId = input.taskId;
+    logContext.count = input.count;
+    logContext.templateId = "mode" in input ? input.templateId : "legacy-scene";
 
     const taskResult = await supabase
       .from("content_tasks")
@@ -117,7 +136,7 @@ export async function POST(request: Request) {
       createSignedUrl: async (asset) => {
         const signed = await supabase.storage.from(asset.storage_bucket).createSignedUrl(asset.storage_path, 600);
         if (signed.error) {
-          throw new ImageGenerationError("参考图片读取失败，请重新上传。", "STORAGE_FAILED", 502);
+          throw withContext(signed.error, "参考图签名失败");
         }
         return signed.data.signedUrl;
       },
@@ -138,7 +157,10 @@ export async function POST(request: Request) {
         generationMode: input.generationMode,
         creativeVariation: input.creativeVariation,
         referenceCount: references.length,
+        stylePresetId: input.stylePresetId,
       });
+      logContext.provider = (await getImageGenerationProvider(user.id)).name;
+      const startedAt = Date.now();
       generated = await generateModelProductImages(user.id, {
         prompt: prompt.positivePrompt,
         negativePrompt: prompt.negativePrompt,
@@ -146,6 +168,7 @@ export async function POST(request: Request) {
         count: input.count,
         references,
       });
+      console.info("Image generation call completed", { ...logContext, durationMs: Date.now() - startedAt });
       assetNamePrefix = `AI模特商品图-${template.name}`;
     } else {
       const prompt = buildProductImagePrompt({
@@ -154,13 +177,17 @@ export async function POST(request: Request) {
         sceneDescription: input.sceneDescription,
         imageStyle: input.imageStyle,
         hasReference: references.length > 0,
+        stylePresetId: input.stylePresetId,
       });
+      logContext.provider = (await getImageGenerationProvider(user.id)).name;
+      const startedAt = Date.now();
       generated = await generateProductImages(user.id, {
         prompt,
         aspectRatio: input.aspectRatio,
         count: input.count,
         references,
       });
+      console.info("Image generation call completed", { ...logContext, durationMs: Date.now() - startedAt });
     }
     if (generated.length !== input.count) {
       throw new ImageGenerationError("图片生成数量与请求不一致，请重试。", "INVALID_RESPONSE", 502);
@@ -171,7 +198,13 @@ export async function POST(request: Request) {
     // Offset by the child's batch position to keep generated filenames unique.
     const nameOffset = "position" in input ? (input.position ?? 1) - 1 : 0;
     for (const [index, generatedImage] of generated.entries()) {
-      const image = await materializeImage(generatedImage);
+      let image: PersistableImage;
+      try {
+        image = await materializeImage(generatedImage);
+      } catch (error) {
+        logImageFailure("download", error, { ...logContext, index });
+        throw error;
+      }
       const extension = extensionByMime[image.mimeType];
       const storagePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
       const upload = await supabase.storage.from("product-assets").upload(storagePath, image.bytes, {
@@ -179,7 +212,7 @@ export async function POST(request: Request) {
         upsert: false,
       });
       if (upload.error) {
-        throw new ImageGenerationError("生成图片保存到 Storage 失败，请稍后重试。", "STORAGE_FAILED", 502);
+        throw logImageFailure("storage-upload", withContext(upload.error, "生成图上传失败"), { ...logContext, index, storagePath });
       }
       uploadedPaths.push(storagePath);
 
@@ -193,12 +226,12 @@ export async function POST(request: Request) {
         selected_for_publishing: true,
       }).select("id, storage_path, original_name, mime_type, size_bytes").single();
       if (asset.error) {
-        throw new ImageGenerationError("生成图片记录保存失败，请稍后重试。", "STORAGE_FAILED", 502);
+        throw logImageFailure("db-asset-insert", withContext(asset.error, "素材记录写入失败"), { ...logContext, index, storagePath });
       }
       insertedAssetIds.push(asset.data.id);
       const signed = await supabase.storage.from("product-assets").createSignedUrl(storagePath, 3600);
       if (signed.error) {
-        throw new ImageGenerationError("生成图片读取链接创建失败。", "STORAGE_FAILED", 502);
+        throw logImageFailure("storage-sign", withContext(signed.error, "生成图读取链接创建失败"), { ...logContext, index, storagePath });
       }
       assets.push({ ...asset.data, signedUrl: signed.data.signedUrl });
     }
@@ -215,20 +248,24 @@ export async function POST(request: Request) {
         status: "draft",
         publish_status: "draft",
       });
-      if (post.error) throw post.error;
+      if (post.error) throw withContext(post.error, "草稿记录写入失败");
     }
 
     return Response.json({ assets, referenceImageCount: references.length });
   } catch (error) {
+    const failure = logImageFailure("images/generate", error, logContext);
     if (uploadedPaths.length || insertedAssetIds.length) {
       try {
         const { supabase } = await requireUser();
         if (insertedAssetIds.length) await supabase.from("assets").delete().in("id", insertedAssetIds);
         if (uploadedPaths.length) await supabase.storage.from("product-assets").remove(uploadedPaths);
-      } catch {
-        console.error("Generated image cleanup failed");
+      } catch (cleanupError) {
+        console.error("Generated image cleanup failed", { message: cleanupError instanceof Error ? cleanupError.message : "unknown" });
       }
     }
-    return jsonError(error);
+    const response = jsonError(error);
+    // 把分类结果一并返回，前端据此展示「正在重试 / 无需重试」等具体提示。
+    const body = await response.json() as Record<string, unknown>;
+    return Response.json({ ...body, category: failure.category, retriable: failure.retriable }, { status: response.status });
   }
 }

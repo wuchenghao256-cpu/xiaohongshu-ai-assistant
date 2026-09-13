@@ -23,18 +23,20 @@ export async function prepareProductReferences(input: {
   const byId = new Map(input.assets.map((asset) => [asset.id, asset]));
   const orderedAssets = input.requestedIds.map((id) => byId.get(id));
   if (orderedAssets.some((asset) => !asset)) {
-    throw new ImageGenerationError("部分参考图片不存在或无权访问。", "STORAGE_FAILED", 403);
+    // 参考图缺失是参数问题（用户删了图或改了任务），不是 Storage 故障，
+    // 否则前端会提示「存储失败」并让人白白重试。
+    throw new ImageGenerationError("部分参考图片不存在或无权访问。", "VALIDATION_ERROR", 403);
   }
 
   return Promise.all(orderedAssets.map(async (asset, index) => {
     if (!asset || !isSupportedImageMimeType(asset.mime_type)) {
-      throw new ImageGenerationError("参考图片仅支持 JPEG、PNG 或 WebP。", "STORAGE_FAILED", 400);
+      throw new ImageGenerationError("参考图片仅支持 JPEG、PNG 或 WebP。", "VALIDATION_ERROR", 400);
     }
     if (asset.size_bytes <= 0 || asset.size_bytes > MAX_REFERENCE_BYTES) {
-      throw new ImageGenerationError("参考图片为空或超过 8MB。", "STORAGE_FAILED", 400);
+      throw new ImageGenerationError("参考图片为空或超过 8MB。", "VALIDATION_ERROR", 400);
     }
     if ((asset.width !== null && asset.width <= 0) || (asset.height !== null && asset.height <= 0)) {
-      throw new ImageGenerationError("参考图片尺寸信息无效，请重新上传。", "STORAGE_FAILED", 400);
+      throw new ImageGenerationError("参考图片尺寸信息无效，请重新上传。", "VALIDATION_ERROR", 400);
     }
     return {
       url: await input.createSignedUrl(asset),

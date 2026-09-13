@@ -1,5 +1,12 @@
 // 相对路径 + 显式扩展名：项目测试脚本直接用 Node 运行，没有 @/ 别名解析。
 import { productCategoryLabels, type ProductCategory, type VideoJobInput } from "./types.ts";
+import { videoProductFidelityConstraints } from "../ai/product-fidelity.ts";
+
+/**
+ * 商品保真约束与图片生成共用一份定义（见 lib/ai/product-fidelity.ts），
+ * 避免图片提示词加了约束、视频提示词却漏掉，导致同一商品的图文观感不一致。
+ */
+const FIDELITY_BLOCK = `商品保真约束（强制，优先级高于以上任何冲突指令）：\n${videoProductFidelityConstraints}`;
 
 /**
  * Seedance 2.0 的多模态参考模式支持在 prompt 中按 [图1][图2] 指代参考图。
@@ -98,6 +105,7 @@ function productAdPrompt(input: Extract<VideoJobInput, { kind: "product_ad" }>) 
     input.productInfo ? `商品信息：${input.productInfo}` : "",
     input.concept ? `创意要求：${input.concept}` : "",
     "商业广告摄影，真实光影，画面稳定，不出现文字水印与变形。",
+    FIDELITY_BLOCK,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -106,6 +114,7 @@ function imageToVideoPrompt(input: Extract<VideoJobInput, { kind: "image_to_vide
     "参考 [图1] 中的商品，保持原有外观、颜色、材质、Logo 与文字完全不变。",
     input.prompt,
     "商业广告摄影，真实光影，镜头运动平稳，商品不得变形。",
+    FIDELITY_BLOCK,
   ].join("\n");
 }
 
@@ -118,6 +127,7 @@ function ugcPrompt(input: Extract<VideoJobInput, { kind: "product_ugc" }>) {
     "人物自然面对镜头口播，语速自然，口型与台词一致，画面为真实生活场景。",
     input.script ? `台词：${input.script}` : "",
     input.productInfo ? `商品信息：${input.productInfo}` : "",
+    FIDELITY_BLOCK,
   ].filter(Boolean).join("\n\n");
 }
 

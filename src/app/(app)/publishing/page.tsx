@@ -18,7 +18,9 @@ const platformLabels: Record<Platform, string> = {
   wechat_moments: "微信朋友圈",
 };
 
-export default async function PublishingPage() {
+export default async function PublishingPage({ searchParams }: { searchParams: Promise<{ postId?: string }> }) {
+  // 草稿列表点「发布」会带着 postId 跳进来，需要把这条内容预选中。
+  const { postId: requestedPostId } = await searchParams;
   const configured = Boolean(getSupabasePublicEnv());
   let posts: PublishingPost[] = [];
   let jobs: PublishingJobView[] = [];
@@ -91,6 +93,6 @@ export default async function PublishingPage() {
   return <>
     <PageHeader title="发布中心" description="选择一条最终内容，为每个平台分别创建发布任务" />
     {!configured ? <div className="px-4 pt-4 sm:px-8 sm:pt-8"><ConfigurationAlert /></div> : null}
-    <PublishingCenter initialPosts={posts} capabilities={capabilities} initialJobs={jobs} />
+    <PublishingCenter initialPosts={posts} capabilities={capabilities} initialJobs={jobs} initialPostId={requestedPostId} />
   </>;
 }

@@ -30,6 +30,12 @@ import {
   type ModelStyle,
   type ModelGender,
 } from "@/lib/ai/image-template-config";
+import {
+  defaultImageStylePresetId,
+  imageStylePresets,
+  type ImageStylePresetId,
+} from "@/lib/ai/style-presets";
+import { describeFailure, type ImageFailureCategory } from "@/lib/image-ai/failure";
 import { cn } from "@/lib/utils";
 
 export type GeneratedAssetRecord = {
@@ -64,6 +70,16 @@ const framingLabels: Record<string, string> = {
 
 function templateTitle(name: string) {
   return name.replaceAll("-", " · ");
+}
+
+/**
+ * 子任务表把失败分类写成 `[CATEGORY] 中文说明`。这里拆开，分类用于选择提示语气，
+ * 去掉前缀的说明才是给用户看的正文。
+ */
+function parseChildError(errorMessage?: string | null) {
+  const match = /^\[([A-Z_]+)\]\s*([\s\S]*)$/.exec(errorMessage ?? "");
+  if (!match) return { category: undefined, message: errorMessage ?? "" };
+  return { category: match[1] as ImageFailureCategory, message: match[2] };
 }
 
 export function AiImageGenerator({
@@ -104,19 +120,40 @@ export function AiImageGenerator({
     useState<ModelGenerationMode>("precise_edit");
   const [creativeVariation, setCreativeVariation] =
     useState<CreativeVariationLevel>("medium");
+  const [stylePresetId, setStylePresetId] = useState<ImageStylePresetId>(
+    defaultImageStylePresetId,
+  );
   const [generating, setGenerating] = useState(false);
   const [batchState, setBatchState] = useState<BatchState | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
   const selectedTemplate =
     modelImageTemplates.find((template) => template.id === templateId) ??
     defaultTemplate;
+  const selectedPreset =
+    imageStylePresets.find((preset) => preset.id === stylePresetId) ??
+    imageStylePresets[0];
   const exceedsAssetLimit = existingAssetCount + count > 9;
   const batchActive = batchState?.children.some((job) => job.status === "queued" || job.status === "generating") ?? false;
 
   const loadBatch = useCallback(async (currentTaskId: string) => {
-    const response = await fetch(`/api/image-jobs?taskId=${encodeURIComponent(currentTaskId)}`, { cache: "no-store" });
-    if (!response.ok) return null;
-    const data = await response.json() as BatchState;
-    if (data.batch) {
+    let response: Response;
+    try {
+      response = await fetch(`/api/image-jobs?taskId=${encodeURIComponent(currentTaskId)}`, { cache: "no-store" });
+    } catch (error) {
+      // 网络层失败也要让页面说话，否则进度会永远停在「生成中」。
+      setPollError(error instanceof Error ? error.message : "网络请求失败");
+      toast.error("查询生成进度失败，正在自动重试…");
+      return null;
+    }
+    const data = await response.json().catch(() => null) as (BatchState & { error?: string; category?: ImageFailureCategory }) | null;
+    if (!response.ok) {
+      const category = data?.category;
+      setPollError(data?.error ?? "查询图片进度失败");
+      toast.error(category ? `${describeFailure(category).message}${describeFailure(category).hint}` : "查询生成进度失败，正在自动重试…");
+      return null;
+    }
+    setPollError(null);
+    if (data?.batch) {
       setBatchState(data);
       if (data.assets?.length) onGenerated(data.assets);
       return data;
@@ -137,7 +174,7 @@ export function AiImageGenerator({
   }, [taskId, batchState?.children, loadBatch]);
 
   function requestPayload(currentTaskId: string, requestedCount: number) {
-    return { mode: "model-template", taskId: currentTaskId, referenceAssetIds, templateId, productCategory, gender, style, aspectRatio, count: requestedCount, productFocus, generationMode, creativeVariation };
+    return { mode: "model-template", taskId: currentTaskId, referenceAssetIds, templateId, productCategory, gender, style, aspectRatio, count: requestedCount, productFocus, generationMode, creativeVariation, stylePresetId };
   }
 
 
@@ -310,6 +347,52 @@ export function AiImageGenerator({
       <div className="mt-6 border-t pt-5">
         <div className="workspace-section-heading">
           <div>
+            <h2>广告风格</h2>
+            <p>在模板之上叠加一层商业大片质感，模板决定「谁·在哪·怎么拍」，风格决定「像哪一类广告」。</p>
+          </div>
+        </div>
+        <div
+          className="grid gap-2 sm:grid-cols-2"
+          role="radiogroup"
+          aria-label="广告风格预设"
+        >
+          {imageStylePresets.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              role="radio"
+              aria-checked={preset.id === stylePresetId}
+              onClick={() => setStylePresetId(preset.id)}
+              className={cn(
+                "rounded-lg border p-3 text-left transition-colors hover:bg-muted/45",
+                preset.id === stylePresetId && "border-primary/60 bg-accent/60",
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-sm font-medium">{preset.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {preset.label}
+                </span>
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                {preset.description}
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          当前风格：{selectedPreset.name} · {selectedPreset.label}
+          {selectedPreset.aspectHint ? ` · ${selectedPreset.aspectHint}` : ""}
+        </p>
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+          所有风格都会强制附加商品保真约束：保留商品形状、包装结构、Logo
+          位置与材质配色，不重设计商品，不扭曲商品文字区域，不加水印。
+        </p>
+      </div>
+
+      <div className="mt-6 border-t pt-5">
+        <div className="workspace-section-heading">
+          <div>
             <h2>选择模板</h2>
             <p>模板会自动设置模特、场景与构图，不展示内部技术参数。</p>
           </div>
@@ -392,17 +475,49 @@ export function AiImageGenerator({
             ) : null}
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {batchState.children.map((job) => (
-              <div key={job.id} className="rounded-md border bg-background px-3 py-2">
-                <p className="text-xs text-muted-foreground">图片 {job.position}</p>
-                <Badge className="mt-1" variant={job.status === "failed" ? "destructive" : "secondary"}>
-                  {job.status === "generating" ? <Loader2 className="animate-spin" /> : null}
-                  {jobStatusLabels[job.status]}
-                </Badge>
-                {job.attempts > 1 ? <p className="mt-1 text-[11px] text-muted-foreground">第 {job.attempts} 次尝试</p> : null}
-              </div>
-            ))}
+            {batchState.children.map((job) => {
+              const parsed = parseChildError(job.error_message);
+              const retrying = job.status === "generating" && job.attempts > 1;
+              return (
+                <div key={job.id} className="rounded-md border bg-background px-3 py-2">
+                  <p className="text-xs text-muted-foreground">图片 {job.position}</p>
+                  <Badge className="mt-1" variant={job.status === "failed" ? "destructive" : "secondary"}>
+                    {job.status === "generating" ? <Loader2 className="animate-spin" /> : null}
+                    {retrying ? `正在重试（第 ${job.attempts} 次）` : jobStatusLabels[job.status]}
+                  </Badge>
+                  {job.status === "failed" && job.error_message ? (
+                    <p className="mt-1.5 break-words text-[11px] leading-4 text-destructive">
+                      {parsed.message}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
+          {batchState.children.some((job) => job.status === "failed") ? (
+            <div className="mt-3 flex flex-col gap-1 border-t pt-3">
+              {Array.from(
+                new Set(
+                  batchState.children
+                    .filter((job) => job.status === "failed")
+                    .map((job) => parseChildError(job.error_message).category)
+                    .filter(Boolean) as ImageFailureCategory[],
+                ),
+              ).map((category) => (
+                <p key={category} className="text-xs leading-5 text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {describeFailure(category).message}
+                  </span>{" "}
+                  {describeFailure(category).hint}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {pollError ? (
+        <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs leading-5 text-destructive">
+          查询生成进度失败：{pollError}。页面每 2 秒自动重试，恢复后进度会继续更新。
         </div>
       ) : null}
     </section>

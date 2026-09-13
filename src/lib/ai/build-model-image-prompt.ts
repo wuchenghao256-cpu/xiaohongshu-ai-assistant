@@ -8,6 +8,15 @@ import type {
   ModelProductFocus,
   ModelStyle,
 } from "@/lib/ai/image-template-config";
+import {
+  defaultImageStylePresetId,
+  getImageStylePreset,
+  type ImageStylePresetId,
+} from "@/lib/ai/style-presets";
+import {
+  productFidelityConstraints,
+  productFidelityNegatives,
+} from "@/lib/ai/product-fidelity";
 
 const categoryInstructions: Record<ModelProductCategory, string> = {
   bag: "Treat the uploaded bag as the primary product reference. Show exactly one matching bag, naturally carried by the model.",
@@ -61,6 +70,8 @@ export type ModelImagePromptInput = {
   generationMode: ModelGenerationMode;
   creativeVariation: CreativeVariationLevel;
   referenceCount: number;
+  /** 风格预设决定「像哪一类商业大片」，与模板正交；省略时使用干净棚拍。 */
+  stylePresetId?: ImageStylePresetId;
 };
 
 export type ModelImagePrompt = {
@@ -72,6 +83,8 @@ export function buildModelImagePrompt(input: ModelImagePromptInput): ModelImageP
   const referenceInstruction = input.referenceCount > 0
     ? `Use all ${input.referenceCount} uploaded reference images together. The first image is the Primary Reference (Front); subsequent images provide Back, Detail, and Logo or Print Detail context in that order when present. Reconcile them into one consistent product. Preserve visible shape, color, proportions, material appearance, construction, logos, prints, and existing product details as closely as possible. Do not invent extra products, accessories, branding, or unobserved features.`
     : "Do not invent branding, logos, product text, accessories, certifications, or unobserved product features.";
+
+  const preset = getImageStylePreset(input.stylePresetId ?? defaultImageStylePresetId) ?? getImageStylePreset(defaultImageStylePresetId)!;
 
   return {
     positivePrompt: [
@@ -85,9 +98,12 @@ export function buildModelImagePrompt(input: ModelImagePromptInput): ModelImageP
       input.generationMode === "creative_ad" ? variationInstructions[input.creativeVariation] : "",
       clothingFramingInstructions[input.productCategory],
       referenceInstruction,
+      preset.promptFragment,
       `Composition settings: ${input.template.framing.replaceAll("_", " ")} framing, ${input.template.pose.replaceAll("_", " ")} pose, ${input.template.scene.replaceAll("_", " ")} scene.`,
       "Use realistic lighting, polished styling, a premium fashion editorial aesthetic, and a luxury fashion-forward composition suitable for social media and e-commerce. Keep the product stable, visually important, and clearly identifiable. No watermark, text overlay, collage, split screen, frame, border, deformed hands, malformed limbs, duplicated garment, distorted print, floating product, low resolution, or messy background.",
-    ].join("\n"),
-    negativePrompt: input.template.negativePromptTemplate,
+      // 保真约束固定放在最后：它是硬约束，最后出现的指令权重最高，且不会被模板覆盖。
+      `PRODUCT FIDELITY CONSTRAINTS (mandatory, override any conflicting instruction above):\n${productFidelityConstraints}`,
+    ].filter(Boolean).join("\n"),
+    negativePrompt: [input.template.negativePromptTemplate, preset.negativeFragment, productFidelityNegatives].join(", "),
   };
 }

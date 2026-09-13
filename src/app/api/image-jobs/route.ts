@@ -2,9 +2,10 @@ import { z } from "zod";
 import { after } from "next/server";
 import { jsonError } from "@/lib/http";
 import { getImageGenerationProvider } from "@/lib/image-ai/client";
+import { classifyImageFailure, logImageFailure, type ImageFailureCategory } from "@/lib/image-ai/failure";
 import { productImageRequestSchema } from "@/lib/image-ai/types";
 import { requireUser } from "@/lib/supabase/auth";
-import { runWithConcurrency, withExponentialRetry } from "@/lib/jobs/orchestrator";
+import { IMAGE_RETRY_BASE_DELAY_MS, IMAGE_RETRY_MAX_ATTEMPTS, runWithConcurrency, withExponentialRetry } from "@/lib/jobs/orchestrator";
 
 const createSchema = productImageRequestSchema.refine((value) => "mode" in value, "仅支持模特商品图批次");
 const retrySchema = z.object({ batchId: z.string().uuid() });
@@ -12,7 +13,24 @@ export const maxDuration = 300;
 
 type ServerSupabase = Awaited<ReturnType<typeof requireUser>>["supabase"];
 type ChildRow = { id: string; position: number };
-class GenerateRequestError extends Error { constructor(message: string, readonly status: number) { super(message); } }
+class GenerateRequestError extends Error { constructor(message: string, readonly status: number, readonly category?: ImageFailureCategory) { super(message); } }
+
+/** 子任务表只存自由文本，这里把分类前缀写进去，前端和日志都能直接读懂。 */
+function withCategory(category: ImageFailureCategory, message: string) {
+  return `[${category}] ${message}`;
+}
+
+/**
+ * PostgrestError / StorageError 是普通对象，不是 Error 实例；不转换的话
+ * 上层日志只能看到 "unknown"，无法区分是数据库写入失败还是策略被拒。
+ */
+function withContext(error: unknown, context: string) {
+  if (error instanceof Error) {
+    error.message = `${context}: ${error.message}`;
+    return error;
+  }
+  return new Error(`${context}: ${JSON.stringify(error).slice(0, 400)}`);
+}
 
 async function updateChild(supabase: ServerSupabase, job: ChildRow, status: "generating" | "completed" | "failed", attempts: number, assetId?: string, errorMessage?: string) {
   const result = await supabase.from("image_child_jobs").update({ status, attempts, asset_id: assetId ?? null, error_message: errorMessage ?? null }).eq("id", job.id);
@@ -30,10 +48,26 @@ async function finishBatch(supabase: ServerSupabase, batchId: string) {
 }
 
 async function markBatchFatal(supabase: ServerSupabase, batchId: string, error: unknown) {
-  const message = error instanceof Error ? error.message : "图片批次后台处理失败";
-  await supabase.from("image_child_jobs").update({ status: "failed", error_message: message }).eq("batch_id", batchId).in("status", ["queued", "generating"]);
+  const failure = logImageFailure("batch-background", error, { batchId });
+  await supabase.from("image_child_jobs").update({ status: "failed", error_message: withCategory(failure.category, failure.message) }).eq("batch_id", batchId).in("status", ["queued", "generating"]);
   await finishBatch(supabase, batchId);
-  console.error("Image batch background processing failed", { batchId, message });
+}
+
+/**
+ * 重试判定完全交给失败分类器：429 / 5xx / 超时 / 下载失败重试；
+ * 内容审核拒绝、参数错误不重试（重试只会再被拒一次并浪费额度）。
+ */
+function isRetriable(error: unknown) {
+  if (error instanceof GenerateRequestError && error.category) {
+    return isRetriableCategory(error.category);
+  }
+  if (error instanceof GenerateRequestError) return error.status === 429 || error.status >= 500;
+  return classifyImageFailure(error).retriable;
+}
+
+const retriableCategories: ImageFailureCategory[] = ["RATE_LIMITED", "PROVIDER_ERROR", "TIMEOUT", "STORAGE_FAILED", "DB_FAILED", "POLLING_FAILED", "UNKNOWN"];
+function isRetriableCategory(category: ImageFailureCategory) {
+  return retriableCategories.includes(category);
 }
 
 async function processBatch(input: z.infer<typeof createSchema>, batchId: string, children: ChildRow[], supportsOutputCount: boolean, supabase: ServerSupabase, requestUrl: string, cookie: string) {
@@ -42,11 +76,11 @@ async function processBatch(input: z.infer<typeof createSchema>, batchId: string
       method: "POST", headers: { "Content-Type": "application/json", cookie },
       body: JSON.stringify({ ...input, count, position }), cache: "no-store",
     });
-    const data = await response.json() as { assets?: Array<{ id: string }>; error?: string };
-    if (!response.ok || !data.assets) throw new GenerateRequestError(data.error ?? "图片生成失败", response.status);
+    const data = await response.json() as { assets?: Array<{ id: string }>; error?: string; category?: ImageFailureCategory };
+    if (!response.ok || !data.assets) throw new GenerateRequestError(data.error ?? "图片生成失败", response.status, data.category);
     return data.assets;
   };
-  const retriable = (error: unknown) => !(error instanceof GenerateRequestError) || error.status === 429 || error.status >= 500;
+  const retriable = isRetriable;
   await supabase.from("image_batch_jobs").update({ status: "generating" }).eq("id", batchId);
   if (supportsOutputCount && children.length === 4) {
     let batchAttempt = 0;
@@ -55,7 +89,7 @@ async function processBatch(input: z.infer<typeof createSchema>, batchId: string
         batchAttempt = attempt;
         await Promise.all(children.map((job) => updateChild(supabase, job, "generating", attempt)));
         return generate(4, children[0].position);
-      }, retriable, { maxAttempts: 3 });
+      }, retriable, { maxAttempts: IMAGE_RETRY_MAX_ATTEMPTS, baseDelayMs: IMAGE_RETRY_BASE_DELAY_MS });
       await Promise.all(children.map((job, index) => updateChild(supabase, job, "completed", batchAttempt, assets[index].id)));
       await finishBatch(supabase, batchId);
       return;
@@ -70,10 +104,12 @@ async function processBatch(input: z.infer<typeof createSchema>, batchId: string
         attempt = currentAttempt;
         await updateChild(supabase, job, "generating", currentAttempt);
         return (await generate(1, job.position))[0];
-      }, retriable, { maxAttempts: 3 });
+      }, retriable, { maxAttempts: IMAGE_RETRY_MAX_ATTEMPTS, baseDelayMs: IMAGE_RETRY_BASE_DELAY_MS });
       await updateChild(supabase, job, "completed", attempt, asset.id);
     } catch (error) {
-      await updateChild(supabase, job, "failed", Math.max(1, attempt), undefined, error instanceof Error ? error.message : "图片生成失败");
+      const failure = classifyImageFailure(error);
+      logImageFailure("batch-child", error, { batchId, position: job.position, attempts: Math.max(1, attempt) });
+      await updateChild(supabase, job, "failed", Math.max(1, attempt), undefined, withCategory(failure.category, error instanceof Error ? error.message : failure.message));
       throw error;
     }
   }), 2);
@@ -129,7 +165,10 @@ export async function GET(request: Request) {
     const latest = await supabase.from("image_batch_jobs").select("id").eq("task_id", taskId).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (latest.error) throw latest.error;
     return Response.json(latest.data ? await presentBatch(supabase, latest.data.id) : { batch: null, children: [], assets: [] });
-  } catch (error) { return jsonError(error); }
+  } catch (error) {
+    // 轮询失败必须让前端看见：静默返回错误会让页面停在「生成中」永远转圈。
+    return jsonError(withContext(error, "查询图片任务进度失败"));
+  }
 }
 
 export async function PATCH(request: Request) {

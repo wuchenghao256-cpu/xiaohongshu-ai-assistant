@@ -20,6 +20,13 @@ export async function runWithConcurrency<T>(
   return results;
 }
 
+/**
+ * 图片生成的自动重试策略：最多 3 次（首次 + 2 次重试），退避 800ms → 1600ms。
+ * 前端在 attempts > 1 时展示「正在重试」，轮询间隔不会因此改变。
+ */
+export const IMAGE_RETRY_MAX_ATTEMPTS = 3;
+export const IMAGE_RETRY_BASE_DELAY_MS = 800;
+
 export async function withExponentialRetry<T>(
   task: (attempt: number) => Promise<T>,
   shouldRetry: (error: unknown) => boolean,

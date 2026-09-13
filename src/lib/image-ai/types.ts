@@ -9,6 +9,7 @@ import {
   modelProductFocusOptions,
   modelStyles,
 } from "@/lib/ai/image-template-config";
+import { defaultImageStylePresetId, imageStylePresetIds } from "@/lib/ai/style-presets";
 
 export const imageSceneOptions = [
   { value: "xiaohongshu", label: "小红书种草场景" },
@@ -28,6 +29,7 @@ export const legacyProductImageRequestSchema = z.object({
   imageStyle: z.string().trim().min(2, "请填写图片风格").max(160),
   aspectRatio: z.enum(imageAspectRatios),
   count: z.number().int().min(1).max(4),
+  stylePresetId: z.enum(imageStylePresetIds).default(defaultImageStylePresetId),
 });
 
 export const modelProductImageRequestSchema = z.object({
@@ -43,6 +45,7 @@ export const modelProductImageRequestSchema = z.object({
   productFocus: z.enum(modelProductFocusOptions),
   generationMode: z.enum(modelGenerationModes).default("precise_edit"),
   creativeVariation: z.enum(creativeVariationLevels).default("medium"),
+  stylePresetId: z.enum(imageStylePresetIds).default(defaultImageStylePresetId),
   position: z.number().int().min(1).max(4).optional(),
 });
 
