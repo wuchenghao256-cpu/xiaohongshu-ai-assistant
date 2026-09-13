@@ -23,7 +23,8 @@ async function runwayFetch(config: ProviderRuntimeConfig, path: string, init?: R
 
 function ratio(input: VideoJobInput) {
   if (input.kind === "product_ugc") return "720:1280";
-  if (input.kind === "product_ad" && input.resolution === "1080p") return input.orientation === "portrait" ? "1080:1920" : "1920:1080";
+  // Runway 只接受 720p/1080p 两种画幅，沿用原有的 1080p 判定。
+  if (input.kind === "product_ad" && input.resolution !== "720p") return input.orientation === "portrait" ? "1080:1920" : "1920:1080";
   return input.orientation === "portrait" ? "720:1280" : "1280:720";
 }
 
