@@ -74,9 +74,16 @@ const providers: Array<{
   {
     id: "runway",
     name: "Runway",
-    description: "Runway 视频生成与 Product Recipes",
+    description: "Runway 视频生成与 Product Recipes（当前非默认 Provider）",
     baseUrl: "https://api.dev.runwayml.com/v1",
     models: ["gen4_turbo", "gen4.5"],
+  },
+  {
+    id: "volcengine",
+    name: "豆包 Seedance 2.0",
+    description: "火山方舟多模态参考生视频，与 Seedream 图片共用同一把 Ark API Key",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    models: ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128"],
   },
 ];
 
@@ -91,8 +98,10 @@ type Draft = {
 
 export function ProviderSettings({
   initialConfigs,
+  arkKeyReusable = false,
 }: {
   initialConfigs: SafeProviderConfig[];
+  arkKeyReusable?: boolean;
 }) {
   const [category, setCategory] = useState<ProviderCategory>("image");
   const [configs, setConfigs] = useState(initialConfigs);
@@ -120,15 +129,18 @@ export function ProviderSettings({
       existing && !provider.models.includes(existing.model)
         ? existing.model
         : "",
-    qualityModel: existing?.qualityModel ?? "gen4.5",
+    qualityModel: existing?.qualityModel ?? (open === "volcengine" ? "doubao-seedance-2-0-260128" : "gen4.5"),
     enabled: existing?.enabled ?? false,
   };
   const update = (partial: Partial<Draft>) =>
     setDrafts((current) => ({ ...current, [key]: { ...draft, ...partial } }));
   const model = draft.customModel.trim() || draft.modelPreset;
+  /** 火山方舟的图片与视频共用同一把 Key：已为 Seedream 配置过就不必再次填写。 */
+  const reusesArkKey =
+    open === "volcengine" && !draft.apiKey.trim() && (arkKeyReusable || !existing);
 
   async function submit(action: "save" | "test") {
-    if (!draft.baseUrl || !model || (!draft.apiKey && !existing)) {
+    if (!draft.baseUrl || !model || (!draft.apiKey && !existing && !reusesArkKey)) {
       toast.error("请完整填写接口地址、模型和 API Key");
       return;
     }
@@ -190,7 +202,13 @@ export function ProviderSettings({
               aria-selected={category === item}
               onClick={() => {
                 setCategory(item);
-                setOpen(item === "text" ? "custom" : item === "video" ? "runway" : "seedream");
+                setOpen(
+                  item === "text"
+                    ? "custom"
+                    : item === "video"
+                      ? "volcengine"
+                      : "seedream",
+                );
               }}
               className={cn(
                 "min-h-11 border-b-2 px-4 text-sm font-medium",
@@ -209,7 +227,7 @@ export function ProviderSettings({
               .filter(
                 (item) =>
                   category === "video"
-                    ? item.id === "runway"
+                    ? item.id === "volcengine" || item.id === "runway"
                     : category === "image"
                       ? item.id !== "runway"
                       : item.id === "openai" || item.id === "custom",
@@ -298,7 +316,7 @@ export function ProviderSettings({
                     type={visible ? "text" : "password"}
                     value={draft.apiKey}
                     onChange={(event) => update({ apiKey: event.target.value })}
-                    placeholder={existing?.hasApiKey ? "已安全保存；留空保持不变" : "输入 API Key"}
+                    placeholder={existing?.hasApiKey ? "已安全保存；留空保持不变" : reusesArkKey ? "已复用 Seedream 的 Ark API Key；留空即可" : "输入 API Key"}
                     autoComplete="new-password"
                     className="pr-11"
                   />
@@ -316,7 +334,9 @@ export function ProviderSettings({
                 <p className="text-xs text-muted-foreground">
                   {existing
                     ? "API Key 已在服务端加密保存。留空将保留原密钥，页面和接口响应不会返回任何密钥片段。"
-                    : "使用 AES-256-GCM 加密后保存。"}
+                    : reusesArkKey
+                      ? "无需重复填写：将自动复用已保存的 Seedream 火山方舟 API Key。"
+                      : "使用 AES-256-GCM 加密后保存。"}
                 </p>
               </Field>
               {provider.models.length ? (
@@ -376,7 +396,11 @@ export function ProviderSettings({
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">模型列表为可扩展配置，后续可加入 Veo、Seedance、Hailuo。</p>
+                  <p className="text-xs text-muted-foreground">
+                    {open === "volcengine"
+                      ? "豆包 Seedance 2.0 由火山方舟提供，与 Seedream 图片共用同一把 Ark API Key。"
+                      : "模型列表为可扩展配置，后续可加入 Veo、Seedance、Hailuo。"}
+                  </p>
                 </Field>
               ) : null}
               <label className="flex min-h-11 items-center gap-3 text-sm">

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const providerNames = ["seedream", "openai", "google", "custom", "runway"] as const;
+export const providerNames = ["seedream", "openai", "google", "custom", "runway", "volcengine"] as const;
 export const providerCategories = ["text", "image", "video"] as const;
 export type ProviderName = (typeof providerNames)[number];
 export type ProviderCategory = (typeof providerCategories)[number];

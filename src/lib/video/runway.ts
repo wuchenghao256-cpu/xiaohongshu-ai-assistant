@@ -32,7 +32,7 @@ export async function createRunwayTask(config: ProviderRuntimeConfig, input: Vid
   let body: Record<string, unknown>;
   if (input.kind === "image_to_video") {
     path = "/image_to_video";
-    body = { model: input.modelTier === "quality" ? (config.qualityModel ?? "gen4.5") : config.model, promptImage: urls[0], promptText: input.prompt, ratio: ratio(input), duration: input.duration };
+    body = { model: config.model, promptImage: urls[0], promptText: input.prompt, ratio: ratio(input), duration: input.duration };
   } else if (input.kind === "product_ad") {
     path = "/recipes/product_ad";
     body = { version: "2026-07", productImages: urls.map((uri) => ({ uri })), productInfo: input.productInfo || undefined,

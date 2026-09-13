@@ -12,9 +12,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     const job = await supabase.from("video_jobs").select("output_url,status").eq("id", id).single();
     if (job.error || job.data.status !== "completed" || !job.data.output_url) throw new Error("视频尚未生成完成");
     const outputUrl = new URL(job.data.output_url);
-    if (outputUrl.protocol !== "https:") throw new Error("Runway 视频地址无效");
+    if (outputUrl.protocol !== "https:") throw new Error("视频地址无效");
+    // 方舟返回的是带签名的临时地址（约 24 小时过期），保存时必须下载后转存到私有 Storage。
     const response = await fetch(outputUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error("Runway 视频下载失败");
+    if (!response.ok) throw new Error("视频下载失败，请稍后重试");
     const declared = Number(response.headers.get("content-length") ?? 0);
     if (declared > MAX_VIDEO_BYTES) throw new Error("视频超过作品库 100MB 上限");
     const bytes = new Uint8Array(await response.arrayBuffer());

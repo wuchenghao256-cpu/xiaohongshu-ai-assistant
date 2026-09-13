@@ -15,7 +15,7 @@ import {
   getSupabasePublicEnv,
   hasProviderEncryptionKey,
 } from "@/lib/env";
-import { listProviderConfigs } from "@/lib/providers/repository";
+import { listProviderConfigs, hasReusableArkKey } from "@/lib/providers/repository";
 import { getCurrentUser } from "@/lib/supabase/server";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -28,6 +28,7 @@ export default async function SettingsPage() {
   const supabaseReady = Boolean(getSupabasePublicEnv());
   let templates: ContentTemplate[] = [];
   let providerConfigs = [] as Awaited<ReturnType<typeof listProviderConfigs>>;
+  let arkKeyReusable = false;
   if (supabaseReady) {
     const result = await (await createClient())
       .from("content_templates")
@@ -36,8 +37,10 @@ export default async function SettingsPage() {
       .order("updated_at", { ascending: false });
     templates = (result.data ?? []) as ContentTemplate[];
     const user = await getCurrentUser();
-    if (user && hasProviderEncryptionKey())
+    if (user && hasProviderEncryptionKey()) {
       providerConfigs = await listProviderConfigs(user.id).catch(() => []);
+      arkKeyReusable = await hasReusableArkKey(user.id).catch(() => false);
+    }
   }
   return (
     <>
@@ -94,7 +97,7 @@ export default async function SettingsPage() {
             </Card>
           </section>
           {supabaseReady && hasProviderEncryptionKey() ? (
-            <ProviderSettings initialConfigs={providerConfigs} />
+            <ProviderSettings initialConfigs={providerConfigs} arkKeyReusable={arkKeyReusable} />
           ) : (
             <Card>
               <CardHeader>
