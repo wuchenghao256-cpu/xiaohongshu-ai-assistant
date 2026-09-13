@@ -6,6 +6,14 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import {
   Select,
@@ -124,6 +132,7 @@ export function AiImageGenerator({
     defaultImageStylePresetId,
   );
   const [generating, setGenerating] = useState(false);
+  const [newRoundOpen, setNewRoundOpen] = useState(false);
   // 刷新后由服务端把本轮的最近批次带进来，进度面板立刻就有内容，不用等第一次轮询。
   const [batchState, setBatchState] = useState<BatchState | null>(initialBatch ?? null);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -137,6 +146,11 @@ export function AiImageGenerator({
   const sessionFull = existingAssetCount >= ROUND_ASSET_LIMIT;
   const exceedsAssetLimit = existingAssetCount + count > ROUND_ASSET_LIMIT;
   const batchActive = batchState?.children.some((job) => isBatchActive(job.status)) ?? false;
+  // 只要还有属于当前轮次的图片（参考图也算），用户就可以主动结束这一轮。
+  // 不要求凑满 9 张：生成到一半想换商品时，「开始新一轮」是唯一的出口。
+  const canStartNewRound = Boolean(taskId) && existingAssetCount > 0;
+  // 正在生成时禁用，避免用户把按钮当成「取消」而误操作掉当前这一轮。
+  const newRoundBlocked = generating || batchActive;
 
   const loadBatch = useCallback(async (currentTaskId: string) => {
     let response: Response;
@@ -237,11 +251,12 @@ export function AiImageGenerator({
   }
 
   async function startNewRound() {
+    setNewRoundOpen(false);
     setGenerating(true);
     try {
       await onStartNewRound();
       setBatchState(null);
-      toast.success("已开始新一轮创作，生成额度重新从 0 开始");
+      toast.success("已开始新一轮创作，计数重新从 0/9 开始，历史图片仍保留在素材库");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "开始新一轮失败，请重试");
     } finally {
@@ -363,20 +378,33 @@ export function AiImageGenerator({
           ? "只锁定商品身份信息，主动改变人物、动作、场景、灯光、镜头和广告构图。"
           : "保持现有高保真编辑逻辑，尽量贴近原图呈现。"}
       </p>
-      {sessionFull ? (
-        <div className="mt-4 rounded-lg border border-primary/40 bg-accent/40 p-3">
-          <p className="text-sm">本轮已生成 {ROUND_ASSET_LIMIT} 张，生成额度已用完。上传新的商品参考图或点「开始新一轮」都会开启新的创作任务，额度重新从 0 开始。</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-2"
-            disabled={generating || batchActive}
-            onClick={() => void startNewRound()}
-          >
-            {generating ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-            开始新一轮
-          </Button>
+      {canStartNewRound ? (
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm">
+              本轮已生成 {existingAssetCount}/{ROUND_ASSET_LIMIT} 张
+              {sessionFull
+                ? "，生成额度已用完。"
+                : "，想换商品或重新开始时可以提前结束这一轮。"}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full shrink-0 sm:w-auto"
+              disabled={newRoundBlocked}
+              onClick={() => setNewRoundOpen(true)}
+            >
+              {generating ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+              开始新一轮
+            </Button>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            {sessionFull
+              ? "开始新一轮会开启新的创作任务，计数回到 0/9。"
+              : `新一轮计数从 0/${ROUND_ASSET_LIMIT} 开始，已生成的图片仍保留在素材库与历史记录中。`}
+            {batchActive ? "当前批次仍在后台生成，生成完成后才能开始新一轮。" : ""}
+          </p>
         </div>
       ) : null}
 
@@ -562,6 +590,38 @@ export function AiImageGenerator({
           查询生成进度失败：{pollError}。页面每 2 秒自动重试，恢复后进度会继续更新。
         </div>
       ) : null}
+      <Dialog
+        open={newRoundOpen}
+        onOpenChange={(open) => {
+          if (!generating) setNewRoundOpen(open);
+        }}
+      >
+        <DialogContent showCloseButton={!generating}>
+          <DialogHeader>
+            <DialogTitle>开始新一轮创作</DialogTitle>
+            <DialogDescription>
+              开始新一轮后，当前生成图片仍会保留在素材库和历史记录中。是否继续？
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            新一轮会创建新的创作任务，图片计数从 0/{ROUND_ASSET_LIMIT} 重新开始。
+          </p>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={generating}
+              onClick={() => setNewRoundOpen(false)}
+            >
+              取消
+            </Button>
+            <Button type="button" disabled={generating} onClick={() => void startNewRound()}>
+              {generating ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+              {generating ? "正在创建…" : "确认开始新一轮"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
