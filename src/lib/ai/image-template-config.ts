@@ -21,6 +21,7 @@ export type ModelGenerationMode = (typeof modelGenerationModes)[number];
 export type ModelImageTemplate = {
   id: string;
   name: string;
+  previewImage: string;
   productCategory: ModelProductCategory;
   gender: ModelGender;
   style: ModelStyle;
@@ -40,6 +41,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-bag-street",
     name: "欧美女模-手提包-街拍站姿",
+    previewImage: "/template-previews/female-bag-street.webp",
     productCategory: "bag",
     gender: "female",
     style: "street",
@@ -55,6 +57,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-bag-indoor-luxury",
     name: "欧美女模-单肩包-室内轻奢",
+    previewImage: "/template-previews/female-bag-indoor.webp",
     productCategory: "bag",
     gender: "female",
     style: "luxury",
@@ -70,6 +73,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-bag-product-focus",
     name: "欧美女模-抱包特写-商品突出",
+    previewImage: "/template-previews/female-bag-focus.webp",
     productCategory: "bag",
     gender: "female",
     style: "luxury",
@@ -85,6 +89,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-shoes-standing",
     name: "欧美女模-穿鞋站姿",
+    previewImage: "/template-previews/female-shoes-studio.webp",
     productCategory: "shoes",
     gender: "female",
     style: "luxury",
@@ -100,6 +105,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-shoes-street",
     name: "欧美男模-穿鞋行走",
+    previewImage: "/template-previews/male-shoes-street.webp",
     productCategory: "shoes",
     gender: "male",
     style: "street",
@@ -115,6 +121,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-bag-minimal",
     name: "欧美男模-提包/背包-极简风",
+    previewImage: "/template-previews/male-bag-minimal.webp",
     productCategory: "bag",
     gender: "male",
     style: "minimalist",
@@ -130,6 +137,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-clothing-street",
     name: "欧美女模-服装-街拍",
+    previewImage: "/template-previews/female-clothing-street.webp",
     productCategory: "clothing",
     gender: "female",
     style: "street",
@@ -145,6 +153,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-clothing-indoor",
     name: "欧美女模-服装-室内轻奢",
+    previewImage: "/template-previews/female-clothing-indoor.webp",
     productCategory: "clothing",
     gender: "female",
     style: "luxury",
@@ -160,6 +169,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-clothing-minimal",
     name: "欧美男模-服装-极简风",
+    previewImage: "/template-previews/male-clothing-studio.webp",
     productCategory: "clothing",
     gender: "male",
     style: "minimalist",
@@ -175,6 +185,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-pants-full-body",
     name: "欧美女模-裤子-全身展示",
+    previewImage: "/template-previews/female-pants-studio.webp",
     productCategory: "pants",
     gender: "female",
     style: "lifestyle",
@@ -190,6 +201,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-pants-street",
     name: "欧美男模-裤子-街拍",
+    previewImage: "/template-previews/male-pants-street.webp",
     productCategory: "pants",
     gender: "male",
     style: "street",
@@ -205,6 +217,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "female-pants-product-focus",
     name: "欧美女模-裤子-商品突出",
+    previewImage: "/template-previews/female-pants-focus.webp",
     productCategory: "pants",
     gender: "female",
     style: "luxury",
@@ -220,6 +233,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-top-minimal-full-body-studio",
     name: "欧美男模-上衣-极简全身棚拍",
+    previewImage: "/template-previews/male-clothing-studio.webp",
     productCategory: "clothing",
     gender: "male",
     style: "minimalist",
@@ -235,6 +249,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-top-street-oversized",
     name: "欧美男模-上衣-街头宽松站姿",
+    previewImage: "/template-previews/male-clothing-street.webp",
     productCategory: "clothing",
     gender: "male",
     style: "street",
@@ -250,6 +265,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-top-indoor-editorial",
     name: "欧美男模-上衣-室内时尚大片",
+    previewImage: "/template-previews/male-clothing-indoor.webp",
     productCategory: "clothing",
     gender: "male",
     style: "luxury",
@@ -265,6 +281,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-top-half-body-product-focus",
     name: "欧美男模-上衣-上半身商品突出",
+    previewImage: "/template-previews/male-clothing-half.webp",
     productCategory: "clothing",
     gender: "male",
     style: "luxury",
@@ -280,6 +297,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-top-urban-walking",
     name: "欧美男模-上衣-都市随性行走",
+    previewImage: "/template-previews/male-clothing-street.webp",
     productCategory: "clothing",
     gender: "male",
     style: "lifestyle",
@@ -295,6 +313,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-top-minimal-ecommerce",
     name: "欧美男模-上衣-极简电商感",
+    previewImage: "/template-previews/male-clothing-half.webp",
     productCategory: "clothing",
     gender: "male",
     style: "minimalist",
@@ -310,6 +329,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-pants-full-body-display",
     name: "欧美男模-裤子-全身展示",
+    previewImage: "/template-previews/male-pants-studio.webp",
     productCategory: "pants",
     gender: "male",
     style: "minimalist",
@@ -325,6 +345,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-pants-street-walking",
     name: "欧美男模-裤子-街头行走",
+    previewImage: "/template-previews/male-pants-street.webp",
     productCategory: "pants",
     gender: "male",
     style: "street",
@@ -340,6 +361,7 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
     id: "male-pants-product-focus",
     name: "欧美男模-裤子-裤型商品突出",
+    previewImage: "/template-previews/male-pants-studio.webp",
     productCategory: "pants",
     gender: "male",
     style: "luxury",

@@ -1,6 +1,7 @@
 "use client";
 
-import { ImagePlus, Loader2 } from "lucide-react";
+import { Check, ImagePlus, Loader2 } from "lucide-react";
+import Image from "next/image";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -245,11 +246,11 @@ export function AiImageGenerator({
           </div>
         </div>
         <div
-          className="grid max-h-[410px] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3"
+          className="template-grid grid max-h-[410px] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3"
           role="radiogroup"
           aria-label="图片模板"
         >
-          {modelImageTemplates.map((template, index) => (
+          {modelImageTemplates.map((template) => (
             <button
               key={template.id}
               type="button"
@@ -261,13 +262,20 @@ export function AiImageGenerator({
                 template.id === templateId && "template-card-selected",
               )}
             >
-              <span className="template-thumbnail" aria-hidden="true">
-                <span
-                  className={
-                    index % 2 ? "template-figure-left" : "template-figure-right"
-                  }
+              <span className="template-thumbnail">
+                <Image
+                  src={template.previewImage}
+                  alt={`${templateTitle(template.name)}预览`}
+                  fill
+                  sizes="(max-width: 640px) 42vw, 180px"
+                  className="template-preview-image"
                 />
               </span>
+              {template.id === templateId ? (
+                <span className="template-selected-mark" aria-hidden="true">
+                  <Check />
+                </span>
+              ) : null}
               <span className="block text-sm font-medium leading-5">
                 {templateTitle(template.name)}
               </span>

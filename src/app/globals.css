@@ -140,27 +140,37 @@
     @apply bg-muted text-foreground;
   }
   .template-card {
-    @apply min-w-0 rounded-md border bg-background p-2 text-left transition-colors hover:border-foreground/40;
+    @apply relative min-w-0 overflow-hidden rounded-md border bg-background p-2 text-left transition-[border-color] duration-200 hover:border-foreground/40;
   }
   .template-card-selected {
-    @apply border-primary ring-1 ring-primary/15;
+    @apply border-primary;
   }
   .template-thumbnail {
-    @apply relative mb-2 block aspect-[4/3] overflow-hidden rounded bg-neutral-100;
+    @apply relative mb-2 block aspect-[3/4] overflow-hidden rounded-sm bg-gradient-to-br from-stone-100 to-neutral-200;
   }
-  .template-thumbnail::after {
-    content: "";
-    @apply absolute inset-x-3 bottom-0 h-1/3 rounded-t bg-neutral-300;
+  .template-preview-image {
+    @apply object-cover transition-transform duration-200 ease-out;
   }
-  .template-figure-left,
-  .template-figure-right {
-    @apply absolute bottom-0 z-10 h-4/5 w-1/3 rounded-t-full bg-neutral-700;
+  .template-card:hover .template-preview-image {
+    transform: scale(1.02);
   }
-  .template-figure-left {
-    @apply left-1/4;
+  .template-selected-mark {
+    @apply absolute right-3 top-3 z-10 flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground;
   }
-  .template-figure-right {
-    @apply right-1/4;
+  .template-selected-mark svg {
+    @apply size-3 stroke-[2.5];
+  }
+  .template-grid {
+    scrollbar-color: color-mix(in oklab, var(--foreground) 24%, transparent)
+      transparent;
+    scrollbar-width: thin;
+  }
+  .template-grid::-webkit-scrollbar {
+    width: 5px;
+  }
+  .template-grid::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--foreground) 24%, transparent);
   }
   .workspace-section {
     @apply min-w-0 rounded-lg border bg-background p-4 sm:p-5;
