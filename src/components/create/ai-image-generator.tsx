@@ -1,30 +1,31 @@
 "use client";
 
-import { Loader2, WandSparkles } from "lucide-react";
+import { ImagePlus, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  modelGenderLabels,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   modelGenerationModeLabels,
   modelGenerationModes,
+  modelGenderLabels,
   modelImageAspectRatios,
   modelImageTemplates,
-  modelProductCategories,
-  modelProductCategoryLabels,
-  modelProductFocusLabels,
-  modelStyles,
-  modelStyleLabels,
-  type ModelGender,
   type ModelGenerationMode,
   type ModelImageAspectRatio,
   type ModelProductCategory,
   type ModelProductFocus,
   type ModelStyle,
+  type ModelGender,
 } from "@/lib/ai/image-template-config";
+import { cn } from "@/lib/utils";
 
 export type GeneratedAssetRecord = {
   id: string;
@@ -33,8 +34,23 @@ export type GeneratedAssetRecord = {
   size_bytes: number;
   signedUrl: string;
 };
-
 const generationCounts = [1, 2, 4] as const;
+const sceneLabels: Record<string, string> = {
+  studio: "极简棚拍",
+  street: "都市街头",
+  cafe: "咖啡馆",
+  indoor_minimal: "室内生活方式",
+};
+const framingLabels: Record<string, string> = {
+  full_body: "全身构图",
+  half_body: "半身构图",
+  close_up: "细节特写",
+  product_focus: "商品特写",
+};
+
+function templateTitle(name: string) {
+  return name.replaceAll("-", " · ");
+}
 
 export function AiImageGenerator({
   configured,
@@ -51,22 +67,35 @@ export function AiImageGenerator({
   ensureTask: () => Promise<string>;
   onGenerated: (assets: GeneratedAssetRecord[]) => void;
 }) {
-  const defaultTemplate = modelImageTemplates.find((template) => template.isDefault) ?? modelImageTemplates[0];
+  const defaultTemplate =
+    modelImageTemplates.find((template) => template.isDefault) ??
+    modelImageTemplates[0];
   const [templateId, setTemplateId] = useState(defaultTemplate.id);
-  const [productCategory, setProductCategory] = useState<ModelProductCategory>(defaultTemplate.productCategory);
+  const [productCategory, setProductCategory] = useState<ModelProductCategory>(
+    defaultTemplate.productCategory,
+  );
   const [gender, setGender] = useState<ModelGender>(defaultTemplate.gender);
   const [style, setStyle] = useState<ModelStyle>(defaultTemplate.style);
-  const [aspectRatio, setAspectRatio] = useState<ModelImageAspectRatio>(defaultTemplate.aspectRatio);
-  const [count, setCount] = useState<1 | 2 | 4>(defaultTemplate.shotsCountDefault);
-  const [productFocus, setProductFocus] = useState<ModelProductFocus>("product");
-  const [generationMode, setGenerationMode] = useState<ModelGenerationMode>("fidelity");
+  const [aspectRatio, setAspectRatio] = useState<ModelImageAspectRatio>(
+    defaultTemplate.aspectRatio,
+  );
+  const [count, setCount] = useState<1 | 2 | 4>(
+    defaultTemplate.shotsCountDefault,
+  );
+  const [productFocus, setProductFocus] =
+    useState<ModelProductFocus>("product");
+  const [generationMode, setGenerationMode] =
+    useState<ModelGenerationMode>("fidelity");
   const [generating, setGenerating] = useState(false);
-  const selectedTemplate = modelImageTemplates.find((template) => template.id === templateId) ?? defaultTemplate;
+  const selectedTemplate =
+    modelImageTemplates.find((template) => template.id === templateId) ??
+    defaultTemplate;
   const exceedsAssetLimit = existingAssetCount + count > 9;
 
-  function applyTemplate(nextTemplateId: string | null) {
-    if (!nextTemplateId) return;
-    const template = modelImageTemplates.find((item) => item.id === nextTemplateId);
+  function applyTemplate(nextTemplateId: string) {
+    const template = modelImageTemplates.find(
+      (item) => item.id === nextTemplateId,
+    );
     if (!template) return;
     setTemplateId(template.id);
     setProductCategory(template.productCategory);
@@ -74,17 +103,21 @@ export function AiImageGenerator({
     setStyle(template.style);
     setAspectRatio(template.aspectRatio);
     setCount(template.shotsCountDefault);
-    setProductFocus(template.framing === "product_focus" ? "product" : "balanced");
+    setProductFocus(
+      template.framing === "product_focus" ? "product" : "balanced",
+    );
     setGenerationMode("fidelity");
   }
 
   async function generate() {
     if (!referenceAssetIds.length) {
-      toast.error("请先上传并选择至少一张商品参考图");
+      toast.error("请先上传至少一张商品参考图");
       return;
     }
     if (exceedsAssetLimit) {
-      toast.error(`当前还可保存 ${Math.max(0, 9 - existingAssetCount)} 张图片，请减少生成张数`);
+      toast.error(
+        `当前还可保存 ${Math.max(0, 9 - existingAssetCount)} 张图片，请减少生成数量`,
+      );
       return;
     }
     setGenerating(true);
@@ -107,100 +140,169 @@ export function AiImageGenerator({
           generationMode,
         }),
       });
-      const data = await response.json() as { assets?: GeneratedAssetRecord[]; error?: string };
-      if (!response.ok || !data.assets) throw new Error(data.error || "图片生成失败");
+      const data = (await response.json()) as {
+        assets?: GeneratedAssetRecord[];
+        error?: string;
+      };
+      if (!response.ok || !data.assets)
+        throw new Error(data.error || "图片生成失败");
       onGenerated(data.assets);
-      toast.success(`已生成并保存 ${data.assets.length} 张 AI 模特商品图`);
+      toast.success(`已生成并保存 ${data.assets.length} 张商品图`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "图片生成失败，请稍后重试");
+      toast.error(
+        error instanceof Error ? error.message : "图片生成失败，请稍后重试",
+      );
     } finally {
       setGenerating(false);
     }
   }
 
-  return <Card className="bg-muted/20 shadow-none">
-    <CardHeader className="pb-3">
-      <CardTitle className="text-base">AI 模特商品图</CardTitle>
-      <CardDescription>
-        {configured
-          ? referenceAssetIds.length
-            ? `高端时尚商品图模板 · 已选择 ${referenceAssetIds.length} 张商品参考图`
-            : "请先上传并选择商品参考图，再使用高端时尚商品图模板"
-          : "请先在服务端配置图片生成模型"}
-      </CardDescription>
-    </CardHeader>
-    <CardContent className="grid min-w-0 gap-4">
-      <Field>
-        <FieldLabel>Template selector</FieldLabel>
-        <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3" role="radiogroup" aria-label="图片模板">
-          {modelImageTemplates.map((template, index) => <button key={template.id} type="button" role="radio" aria-checked={template.id === templateId} onClick={() => applyTemplate(template.id)} className={template.id === templateId ? "template-card border-foreground" : "template-card border-border"}>
-            <span className="template-thumbnail" aria-hidden="true"><span className={index % 2 ? "template-figure-left" : "template-figure-right"} /></span>
-            <span className="block truncate text-xs font-medium">{template.name}</span>
-            <span className="mt-1 block text-[11px] text-muted-foreground">{modelGenderLabels[template.gender]} · {template.scene} · {modelStyleLabels[template.style]}</span>
-          </button>)}
+  return (
+    <section
+      aria-labelledby="generation-settings-title"
+      className="workspace-section"
+    >
+      <div className="workspace-section-heading">
+        <div>
+          <h2 id="generation-settings-title">生成设置</h2>
+          <p>控制图片比例、生成数量和视觉表现。</p>
         </div>
-        <p className="text-xs text-muted-foreground">已选：{selectedTemplate.name}。模板会回填模特、风格、比例与默认张数。</p>
-      </Field>
-
-      <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-        <Field className="sm:col-span-2">
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field>
+          <FieldLabel htmlFor="model-aspect-ratio">图片比例</FieldLabel>
+          <Select
+            value={aspectRatio}
+            onValueChange={(value) =>
+              value && setAspectRatio(value as ModelImageAspectRatio)
+            }
+          >
+            <SelectTrigger id="model-aspect-ratio" className="w-full">
+              <SelectValue>{aspectRatio}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {modelImageAspectRatios.map((ratio) => (
+                <SelectItem key={ratio} value={ratio}>
+                  {ratio}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="model-image-count">生成数量</FieldLabel>
+          <Select
+            value={String(count)}
+            onValueChange={(value) =>
+              value && setCount(Number(value) as 1 | 2 | 4)
+            }
+          >
+            <SelectTrigger id="model-image-count" className="w-full">
+              <SelectValue>{count} 张</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {generationCounts.map((value) => (
+                <SelectItem
+                  key={value}
+                  value={String(value)}
+                  disabled={existingAssetCount + value > 9}
+                >
+                  {value} 张
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
           <FieldLabel htmlFor="model-generation-mode">生成模式</FieldLabel>
-          <Select value={generationMode} onValueChange={(value) => value && setGenerationMode(value as ModelGenerationMode)}>
-            <SelectTrigger id="model-generation-mode" className="w-full"><SelectValue>{modelGenerationModeLabels[generationMode]}</SelectValue></SelectTrigger>
-            <SelectContent>{modelGenerationModes.map((value) => <SelectItem key={value} value={value}>{modelGenerationModeLabels[value]}</SelectItem>)}</SelectContent>
-          </Select>
-          <p className="text-xs leading-5 text-muted-foreground">高保真优先保留版型与图案；高级风格增强时尚表现，但仍保持商品清晰。</p>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="model-product-category">商品类目</FieldLabel>
-          <Select value={productCategory} onValueChange={(value) => { if (!value) return; const category = value as ModelProductCategory; setProductCategory(category); if (category === "clothing" || category === "pants") setGenerationMode("fidelity"); }}>
-            <SelectTrigger id="model-product-category" className="w-full"><SelectValue>{modelProductCategoryLabels[productCategory]}</SelectValue></SelectTrigger>
-            <SelectContent>{modelProductCategories.map((value) => <SelectItem key={value} value={value}>{modelProductCategoryLabels[value]}</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="model-gender">模特性别</FieldLabel>
-          <Select value={gender} onValueChange={(value) => value && setGender(value as ModelGender)}>
-            <SelectTrigger id="model-gender" className="w-full"><SelectValue>{modelGenderLabels[gender]}</SelectValue></SelectTrigger>
-            <SelectContent>{(["female", "male"] as const).map((value) => <SelectItem key={value} value={value}>{modelGenderLabels[value]}</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="model-style">风格</FieldLabel>
-          <Select value={style} onValueChange={(value) => value && setStyle(value as ModelStyle)}>
-            <SelectTrigger id="model-style" className="w-full"><SelectValue>{modelStyleLabels[style]}</SelectValue></SelectTrigger>
-            <SelectContent>{modelStyles.map((value) => <SelectItem key={value} value={value}>{modelStyleLabels[value]}</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="model-aspect-ratio">输出比例</FieldLabel>
-          <Select value={aspectRatio} onValueChange={(value) => value && setAspectRatio(value as ModelImageAspectRatio)}>
-            <SelectTrigger id="model-aspect-ratio" className="w-full"><SelectValue>{aspectRatio}</SelectValue></SelectTrigger>
-            <SelectContent>{modelImageAspectRatios.map((ratio) => <SelectItem key={ratio} value={ratio}>{ratio}</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="model-image-count">生成张数</FieldLabel>
-          <Select value={String(count)} onValueChange={(value) => value && setCount(Number(value) as 1 | 2 | 4)}>
-            <SelectTrigger id="model-image-count" className="w-full"><SelectValue>{count} 张</SelectValue></SelectTrigger>
-            <SelectContent>{generationCounts.map((value) => <SelectItem key={value} value={String(value)} disabled={existingAssetCount + value > 9}>{value} 张</SelectItem>)}</SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="model-product-focus">商品展示重点</FieldLabel>
-          <Select value={productFocus} onValueChange={(value) => value && setProductFocus(value as ModelProductFocus)}>
-            <SelectTrigger id="model-product-focus" className="w-full"><SelectValue>{modelProductFocusLabels[productFocus]}</SelectValue></SelectTrigger>
-            <SelectContent>{(["product", "balanced"] as const).map((value) => <SelectItem key={value} value={value}>{modelProductFocusLabels[value]}</SelectItem>)}</SelectContent>
+          <Select
+            value={generationMode}
+            onValueChange={(value) =>
+              value && setGenerationMode(value as ModelGenerationMode)
+            }
+          >
+            <SelectTrigger id="model-generation-mode" className="w-full">
+              <SelectValue>
+                {modelGenerationModeLabels[generationMode]}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {modelGenerationModes.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {modelGenerationModeLabels[value]}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </Field>
       </div>
 
-      {exceedsAssetLimit ? <p className="text-sm text-destructive">当前任务最多保存 9 张图片，请选择更少的生成张数。</p> : null}
-      <Button type="button" variant="outline" onClick={generate} disabled={!configured || disabled || generating || !referenceAssetIds.length || exceedsAssetLimit}>
-        {generating ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <WandSparkles data-icon="inline-start" />}
-        {generating ? "正在生成并保存…" : `生成 ${count} 张 AI 模特商品图`}
+      <div className="mt-6 border-t pt-5">
+        <div className="workspace-section-heading">
+          <div>
+            <h2>选择模板</h2>
+            <p>模板会自动设置模特、场景与构图，不展示内部技术参数。</p>
+          </div>
+        </div>
+        <div
+          className="grid max-h-[410px] grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3"
+          role="radiogroup"
+          aria-label="图片模板"
+        >
+          {modelImageTemplates.map((template, index) => (
+            <button
+              key={template.id}
+              type="button"
+              role="radio"
+              aria-checked={template.id === templateId}
+              onClick={() => applyTemplate(template.id)}
+              className={cn(
+                "template-card",
+                template.id === templateId && "template-card-selected",
+              )}
+            >
+              <span className="template-thumbnail" aria-hidden="true">
+                <span
+                  className={
+                    index % 2 ? "template-figure-left" : "template-figure-right"
+                  }
+                />
+              </span>
+              <span className="block text-sm font-medium leading-5">
+                {templateTitle(template.name)}
+              </span>
+              <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+                {modelGenderLabels[template.gender]} ·{" "}
+                {sceneLabels[template.scene]} ·{" "}
+                {framingLabels[template.framing]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          当前模板：{templateTitle(selectedTemplate.name)}
+        </p>
+      </div>
+      {exceedsAssetLimit ? (
+        <p className="mt-4 text-sm text-destructive">
+          当前任务最多保存 9 张图片，请选择更少的生成数量。
+        </p>
+      ) : null}
+      <Button
+        type="button"
+        className="mt-5 w-full"
+        onClick={generate}
+        disabled={
+          !configured ||
+          disabled ||
+          generating ||
+          !referenceAssetIds.length ||
+          exceedsAssetLimit
+        }
+      >
+        {generating ? <Loader2 className="animate-spin" /> : <ImagePlus />}
+        {generating ? "正在生成并保存…" : `生成 ${count} 张商品图`}
       </Button>
-      <p className="text-xs leading-5 text-muted-foreground">生成结果不会添加水印，将自动保存到素材库并勾选为发布图片。</p>
-    </CardContent>
-  </Card>;
+    </section>
+  );
 }
