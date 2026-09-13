@@ -35,24 +35,20 @@ import {
   imageStylePresets,
   type ImageStylePresetId,
 } from "@/lib/ai/style-presets";
+import { isBatchActive, type BatchState, type MediaJobStatus } from "@/lib/image-ai/batches";
+import { ROUND_ASSET_LIMIT } from "@/lib/image-ai/round";
 import { describeFailure, type ImageFailureCategory } from "@/lib/image-ai/failure";
 import { cn } from "@/lib/utils";
 
 export type GeneratedAssetRecord = {
   id: string;
+  taskId: string;
   storage_path: string;
   original_name: string;
   size_bytes: number;
   signedUrl: string;
 };
-type JobStatus = "queued" | "generating" | "completed" | "failed";
-type ChildJob = { id: string; position: number; status: JobStatus; attempts: number; asset_id?: string | null; error_message?: string | null };
-type BatchState = {
-  batch: { id: string; task_id: string; status: JobStatus; total_count: number; completed_count: number; failed_count: number; request_snapshot?: Record<string, unknown> };
-  children: ChildJob[];
-  assets: GeneratedAssetRecord[];
-  supportsOutputCount?: boolean;
-};
+type JobStatus = MediaJobStatus;
 const jobStatusLabels: Record<JobStatus, string> = { queued: "排队中", generating: "生成中", completed: "已完成", failed: "失败" };
 const generationCounts = [1, 2, 4] as const;
 const sceneLabels: Record<string, string> = {
@@ -87,7 +83,9 @@ export function AiImageGenerator({
   disabled,
   referenceAssetIds,
   existingAssetCount,
+  initialBatch,
   ensureTask,
+  onStartNewRound,
   onGenerated,
   taskId,
 }: {
@@ -95,7 +93,9 @@ export function AiImageGenerator({
   disabled: boolean;
   referenceAssetIds: string[];
   existingAssetCount: number;
+  initialBatch?: BatchState | null;
   ensureTask: () => Promise<string>;
+  onStartNewRound: () => Promise<string>;
   onGenerated: (assets: GeneratedAssetRecord[]) => void;
   taskId?: string;
 }) {
@@ -124,7 +124,8 @@ export function AiImageGenerator({
     defaultImageStylePresetId,
   );
   const [generating, setGenerating] = useState(false);
-  const [batchState, setBatchState] = useState<BatchState | null>(null);
+  // 刷新后由服务端把本轮的最近批次带进来，进度面板立刻就有内容，不用等第一次轮询。
+  const [batchState, setBatchState] = useState<BatchState | null>(initialBatch ?? null);
   const [pollError, setPollError] = useState<string | null>(null);
   const selectedTemplate =
     modelImageTemplates.find((template) => template.id === templateId) ??
@@ -132,8 +133,10 @@ export function AiImageGenerator({
   const selectedPreset =
     imageStylePresets.find((preset) => preset.id === stylePresetId) ??
     imageStylePresets[0];
-  const exceedsAssetLimit = existingAssetCount + count > 9;
-  const batchActive = batchState?.children.some((job) => job.status === "queued" || job.status === "generating") ?? false;
+  // 本轮额度已满：这一轮不能再生成，但按钮仍然可点——点下去会开始新一轮（新 task_id）。
+  const sessionFull = existingAssetCount >= ROUND_ASSET_LIMIT;
+  const exceedsAssetLimit = existingAssetCount + count > ROUND_ASSET_LIMIT;
+  const batchActive = batchState?.children.some((job) => isBatchActive(job.status)) ?? false;
 
   const loadBatch = useCallback(async (currentTaskId: string) => {
     let response: Response;
@@ -162,16 +165,18 @@ export function AiImageGenerator({
   }, [onGenerated]);
 
   useEffect(() => {
-    if (!taskId) return;
+    // 本轮已满时不回读上一批：那个批次属于已经结束的这一轮，进度面板再显示它
+    // 只会让用户以为还能接着生成。新一轮开始后 taskId 变化会重新触发轮询。
+    if (!taskId || sessionFull) return;
     const timer = window.setTimeout(() => void loadBatch(taskId), 0);
     return () => window.clearTimeout(timer);
-  }, [taskId, loadBatch]);
+  }, [taskId, sessionFull, loadBatch]);
 
   useEffect(() => {
-    if (!taskId || !batchState?.children.some((job) => job.status === "queued" || job.status === "generating")) return;
+    if (!taskId || sessionFull || !batchState?.children.some((job) => isBatchActive(job.status))) return;
     const timer = window.setInterval(() => void loadBatch(taskId), 2000);
     return () => window.clearInterval(timer);
-  }, [taskId, batchState?.children, loadBatch]);
+  }, [taskId, sessionFull, batchState?.children, loadBatch]);
 
   function requestPayload(currentTaskId: string, requestedCount: number) {
     return { mode: "model-template", taskId: currentTaskId, referenceAssetIds, templateId, productCategory, gender, style, aspectRatio, count: requestedCount, productFocus, generationMode, creativeVariation, stylePresetId };
@@ -201,14 +206,16 @@ export function AiImageGenerator({
       toast.error("请先上传至少一张商品参考图");
       return;
     }
-    if (exceedsAssetLimit) {
+    // 本轮已满时不再拦截：ensureTask() 会开一个额度为 0 的新任务，本轮参考图直接带过去。
+    if (exceedsAssetLimit && !sessionFull) {
       toast.error(
-        `当前还可保存 ${Math.max(0, 9 - existingAssetCount)} 张图片，请减少生成数量`,
+        `当前还可保存 ${Math.max(0, ROUND_ASSET_LIMIT - existingAssetCount)} 张图片，请减少生成数量`,
       );
       return;
     }
     setGenerating(true);
     try {
+      const startingNewRound = sessionFull;
       const taskId = await ensureTask();
       const payload = requestPayload(taskId, count);
       const response = await fetch("/api/image-jobs", {
@@ -219,11 +226,24 @@ export function AiImageGenerator({
       const data = (await response.json()) as BatchState & { error?: string };
       if (!response.ok || !data.batch) throw new Error(data.error || "图片任务创建失败");
       setBatchState(data);
-      toast.success("图片批次已创建，正在后台生成");
+      toast.success(startingNewRound ? "已开始新一轮创作，额度重新从 0 开始，图片正在后台生成" : "图片批次已创建，正在后台生成");
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "图片生成失败，请稍后重试",
       );
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function startNewRound() {
+    setGenerating(true);
+    try {
+      await onStartNewRound();
+      setBatchState(null);
+      toast.success("已开始新一轮创作，生成额度重新从 0 开始");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "开始新一轮失败，请重试");
     } finally {
       setGenerating(false);
     }
@@ -290,7 +310,7 @@ export function AiImageGenerator({
                 <SelectItem
                   key={value}
                   value={String(value)}
-                  disabled={existingAssetCount + value > 9}
+                  disabled={!sessionFull && existingAssetCount + value > ROUND_ASSET_LIMIT}
                 >
                   {value} 张
                 </SelectItem>
@@ -343,6 +363,22 @@ export function AiImageGenerator({
           ? "只锁定商品身份信息，主动改变人物、动作、场景、灯光、镜头和广告构图。"
           : "保持现有高保真编辑逻辑，尽量贴近原图呈现。"}
       </p>
+      {sessionFull ? (
+        <div className="mt-4 rounded-lg border border-primary/40 bg-accent/40 p-3">
+          <p className="text-sm">本轮已生成 {ROUND_ASSET_LIMIT} 张，生成额度已用完。上传新的商品参考图或点「开始新一轮」都会开启新的创作任务，额度重新从 0 开始。</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            disabled={generating || batchActive}
+            onClick={() => void startNewRound()}
+          >
+            {generating ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+            开始新一轮
+          </Button>
+        </div>
+      ) : null}
 
       <div className="mt-6 border-t pt-5">
         <div className="workspace-section-heading">
@@ -443,9 +479,9 @@ export function AiImageGenerator({
           当前模板：{templateTitle(selectedTemplate.name)}
         </p>
       </div>
-      {exceedsAssetLimit ? (
+      {exceedsAssetLimit && !sessionFull ? (
         <p className="mt-4 text-sm text-destructive">
-          当前任务最多保存 9 张图片，请选择更少的生成数量。
+          当前任务最多保存 {ROUND_ASSET_LIMIT} 张图片，请选择更少的生成数量。
         </p>
       ) : null}
       <Button
@@ -458,11 +494,17 @@ export function AiImageGenerator({
           generating ||
           batchActive ||
           !referenceAssetIds.length ||
-          exceedsAssetLimit
+          (exceedsAssetLimit && !sessionFull)
         }
       >
         {generating || batchActive ? <Loader2 className="animate-spin" /> : <ImagePlus />}
-        {generating ? "正在创建批次…" : batchActive ? "批次后台生成中…" : `生成 ${count} 张商品图`}
+        {generating
+          ? "正在创建批次…"
+          : batchActive
+            ? "批次后台生成中…"
+            : sessionFull
+              ? `开始新一轮并生成 ${count} 张`
+              : `生成 ${count} 张商品图`}
       </Button>
       {batchState ? (
         <div className="mt-4 rounded-lg border bg-muted/20 p-3" aria-live="polite">

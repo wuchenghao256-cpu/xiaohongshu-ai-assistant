@@ -2,7 +2,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FileText, ImagePlus, Loader2, Save } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -46,6 +46,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { generationFieldsSchema, writingStyles } from "@/lib/ai/types";
+import type { BatchState } from "@/lib/image-ai/batches";
+import type { CreateSession } from "@/lib/image-ai/create-session";
+import { CURRENT_TASK_COOKIE } from "@/lib/image-ai/current-task-cookie";
+import { ROUND_ASSET_LIMIT } from "@/lib/image-ai/round";
 import {
   imageExtensionByMime,
   isSupportedImageMimeType,
@@ -77,17 +81,41 @@ type FormInput = z.infer<typeof formSchema>;
 /** 素材库「插入当前创作」带过来的素材，服务端已经签好名。 */
 export type CreateWorkspaceInsertAsset = WorkspaceImageAsset & { taskId: string };
 
+function writeCurrentTaskCookie(taskId?: string) {
+  const attributes = `path=/; SameSite=Lax`;
+  document.cookie = taskId
+    ? `${CURRENT_TASK_COOKIE}=${taskId}; ${attributes}`
+    : `${CURRENT_TASK_COOKIE}=; ${attributes}; Max-Age=0`;
+}
+
+function toWorkspaceAsset(asset: CreateSession["referenceAssets"][number]): WorkspaceImageAsset {
+  return {
+    id: asset.id,
+    taskId: asset.taskId,
+    storagePath: asset.storagePath,
+    name: asset.name,
+    preview: asset.signedUrl,
+    size: asset.sizeBytes,
+    kind: asset.kind,
+  };
+}
+
+function dedupeAssets(assets: WorkspaceImageAsset[]) {
+  const seen = new Set<string>();
+  return assets.filter((asset) => (seen.has(asset.id) ? false : (seen.add(asset.id), true)));
+}
+
 export function CreateWorkspace({
   configured,
   imageAiConfigured,
   initialTemplates,
-  initialTaskId,
+  initialSession,
   initialInsertAsset,
 }: {
   configured: boolean;
   imageAiConfigured: boolean;
   initialTemplates: ContentTemplate[];
-  initialTaskId?: string;
+  initialSession: CreateSession | null;
   initialInsertAsset?: CreateWorkspaceInsertAsset;
 }) {
   const defaultTemplate = initialTemplates.find(
@@ -96,13 +124,25 @@ export function CreateWorkspace({
   const defaultKnownStyle = writingStyles.find(
     (style) => style === defaultTemplate?.tone,
   );
-  const [taskId, setTaskId] = useState<string | undefined>(initialTaskId);
+  // 上一轮的起始状态全部由服务端算好后传进来：task_id、本轮图片、批次进度。
+  // 服务端已经按数据库判过「这一轮还能不能继续用」，客户端不再自己猜。
+  const seeded = useMemo(() => {
+    const sessionAssets = initialSession
+      ? [...initialSession.referenceAssets, ...initialSession.generatedAssets].map(toWorkspaceAsset)
+      : [];
+    return {
+      taskId: initialSession?.taskId,
+      sessionAssets,
+      selectedAssetIds: initialSession?.selectedAssetIds ?? [],
+    };
+  }, [initialSession]);
+  const [taskId, setTaskId] = useState<string | undefined>(seeded.taskId);
   // 素材库插入的素材只进入初始状态；后续的上传/删除仍然是普通的 assets 状态。
-  const [assets, setAssets] = useState<WorkspaceImageAsset[]>(
-    initialInsertAsset ? [initialInsertAsset] : [],
+  const [assets, setAssets] = useState<WorkspaceImageAsset[]>(() =>
+    dedupeAssets([...seeded.sessionAssets, ...(initialInsertAsset ? [initialInsertAsset] : [])]),
   );
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(
-    initialInsertAsset ? [initialInsertAsset.id] : [],
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(() =>
+    Array.from(new Set([...seeded.selectedAssetIds, ...(initialInsertAsset ? [initialInsertAsset.id] : [])])),
   );
   const [variants, setVariants] = useState<VariantRecord[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -114,18 +154,19 @@ export function CreateWorkspace({
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [templateName, setTemplateName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
-  useEffect(() => {
-    if (initialTaskId) return;
-    const savedTaskId = window.sessionStorage.getItem("xhs-current-content-task");
-    if (!savedTaskId) return;
-    // 从草稿箱/素材库带 ?taskId= 进来时以 URL 为准：sessionStorage 里是上一次的草稿。
-    const timer = window.setTimeout(() => setTaskId(savedTaskId), 0);
-    return () => window.clearTimeout(timer);
-  }, [initialTaskId]);
+  const [batchState, setBatchState] = useState<BatchState | null>(() =>
+    initialSession?.batch
+      ? { batch: initialSession.batch, children: initialSession.children, assets: initialSession.batchAssets }
+      : null,
+  );
+  /** 造任务的并发闸门：双击或上传与生成同时触发时只能建出一个任务。 */
+  const taskCreationRef = useRef<Promise<string> | null>(null);
 
   useEffect(() => {
-    if (taskId) window.sessionStorage.setItem("xhs-current-content-task", taskId);
+    // cookie 只用于刷新后恢复本轮的 task_id；服务端会重新按数据库判断状态。
+    writeCurrentTaskCookie(taskId);
   }, [taskId]);
+
   const form = useForm<FormInput>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -146,6 +187,10 @@ export function CreateWorkspace({
   const selectedStyle = useWatch({ control: form.control, name: "style" });
   const referenceAssets = assets.filter((asset) => asset.kind === "uploaded");
   const generatedAssets = assets.filter((asset) => asset.kind === "generated");
+  // 9 张额度只算当前任务名下的图片：从素材库插进来的旧任务图片不占这一轮的额度，
+  // 口径与服务端 /api/images/generate 的按 task_id 计数保持一致。
+  const sessionAssetCount = assets.filter((asset) => asset.taskId === taskId).length;
+  const sessionFinished = sessionAssetCount >= ROUND_ASSET_LIMIT;
   const finalVariant = variants.find((variant) => variant.is_final) ?? variants[0];
   // 草稿记录「一次生成现场」：参考图取第一张（主参考图），成图取第一张。
   const draftSourceAssetId = referenceAssets[0]?.id;
@@ -209,8 +254,7 @@ export function CreateWorkspace({
       setSavingTemplate(false);
     }
   }
-  async function ensureTask() {
-    if (taskId) return taskId;
+  async function createTask() {
     const response = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -218,22 +262,57 @@ export function CreateWorkspace({
     });
     const data = (await response.json()) as { taskId?: string; error?: string };
     if (!response.ok || !data.taskId) throw new Error(data.error);
-    setTaskId(data.taskId);
     return data.taskId;
   }
+  /**
+   * 拿到「这一轮」要用的 task_id。两个调用点（上传参考图、点生成）都走这里。
+   *
+   * 并发闸门放在函数体外层：双击，或「开始新一轮」与「生成」几乎同时触发时，
+   * 两次调用会共用同一个 in-flight promise，只会建出一个任务。闸门本身只是
+   * 「正在建」的标记，不参与渲染，所以用 ref 是安全的。
+   */
+  const startNewRound = useCallback(async (): Promise<string> => {
+    if (taskCreationRef.current) return taskCreationRef.current;
+    const creation = (async () => {
+      const newTaskId = await createTask();
+      setTaskId(newTaskId);
+      setAssets([]);
+      setSelectedAssetIds([]);
+      setBatchState(null);
+      return newTaskId;
+    })();
+    taskCreationRef.current = creation;
+    void creation.catch(() => undefined).finally(() => {
+      taskCreationRef.current = null;
+    });
+    return creation;
+    // createTask 只读表单当前值，不依赖任何 state。引用必须保持稳定：它是
+    // ensureTask 的依赖，而 ensureTask 会被当成 props 传给图片生成面板。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const ensureTask = useCallback(async (): Promise<string> => {
+    // 本轮额度没用完（含正在生成、失败待重试）就继续用同一个任务；用满了说明上一轮
+    // 已经结束，必须开新任务，否则新请求会一直被服务端的 9 张上限拒绝。
+    if (taskId && !sessionFinished) return taskId;
+    return startNewRound();
+  }, [taskId, sessionFinished, startNewRound]);
   async function uploadFiles(files: FileList | null) {
     if (!files?.length) return;
     if (referenceAssets.length + files.length > 4) {
       toast.error("参考图最多上传 4 张");
       return;
     }
-    if (assets.length + files.length > 9) {
-      toast.error("当前任务最多保存 9 张图片");
-      return;
-    }
     setUploading(true);
     try {
+      // 先 ensureTask：上一轮已满时会在这里开新任务，额度随之回到 0，
+      // 所以 9 张上限的判断必须放在它后面。
       const currentTaskId = await ensureTask();
+      const currentCount = assets.filter((asset) => asset.taskId === currentTaskId).length;
+      if (currentCount + files.length > ROUND_ASSET_LIMIT) {
+        toast.error(`当前任务最多保存 ${ROUND_ASSET_LIMIT} 张图片`);
+        return;
+      }
       const supabase = createClient();
       const userResult = await supabase.auth.getUser();
       if (!userResult.data.user)
@@ -275,6 +354,7 @@ export function CreateWorkspace({
           ...value,
           {
             id: data.asset!.id,
+            taskId: currentTaskId,
             storagePath: path,
             name: safeName,
             preview: URL.createObjectURL(file),
@@ -333,22 +413,25 @@ export function CreateWorkspace({
     }
   }
   const addGeneratedAssets = useCallback((generated: GeneratedAssetRecord[]) => {
-    const added = generated.map((asset) => ({
-      id: asset.id,
-      storagePath: asset.storage_path,
-      name: asset.original_name,
-      preview: asset.signedUrl,
-      size: asset.size_bytes,
-      kind: "generated" as const,
-    }));
+    // 成图归属的批次可能刚被新一轮替换掉，这里以服务端返回的 taskId 为准。
     setAssets((value) => {
+      const taskIdByAsset = new Map(generated.map((asset) => [asset.id, asset.taskId]));
+      const added = generated.map((asset) => ({
+        id: asset.id,
+        taskId: asset.taskId,
+        storagePath: asset.storage_path,
+        name: asset.original_name,
+        preview: asset.signedUrl,
+        size: asset.size_bytes,
+        kind: "generated" as const,
+      }));
       const existing = new Set(value.map((asset) => asset.id));
-      return [...value, ...added.filter((asset) => !existing.has(asset.id))];
+      return [
+        ...value.map((asset) => taskIdByAsset.has(asset.id) ? { ...asset, taskId: taskIdByAsset.get(asset.id)! } : asset),
+        ...added.filter((asset) => !existing.has(asset.id)),
+      ];
     });
-    setSelectedAssetIds((value) => [
-      ...value,
-      ...added.map((asset) => asset.id),
-    ]);
+    setSelectedAssetIds((value) => [...value, ...generated.map((asset) => asset.id)]);
   }, []);
   async function toggleAsset(assetId: string) {
     const selected = !selectedAssetIds.includes(assetId);
@@ -384,7 +467,7 @@ export function CreateWorkspace({
   return (
     <div className="grid min-h-[calc(100vh-112px)] xl:grid-cols-[minmax(520px,1fr)_minmax(480px,1fr)]">
       <section className="border-b bg-background p-4 sm:p-6 xl:border-r xl:border-b-0">
-        <form onSubmit={form.handleSubmit(generate)}>
+        <form onSubmit={(event) => void form.handleSubmit(generate)(event)}>
           <FieldGroup>
             {!configured ? (
               <Alert>
@@ -445,16 +528,18 @@ export function CreateWorkspace({
             <ReferenceImagesPanel
               assets={referenceAssets}
               uploading={uploading}
-              disabled={!configured || assets.length >= 9}
+              disabled={!configured || sessionAssetCount >= ROUND_ASSET_LIMIT}
               onUpload={uploadFiles}
               onDelete={removeAsset}
             />
             <AiImageGenerator
               configured={imageAiConfigured}
-              disabled={uploading || assets.length >= 9}
+              disabled={uploading}
               referenceAssetIds={referenceAssets.map((asset) => asset.id)}
-              existingAssetCount={assets.length}
+              existingAssetCount={sessionAssetCount}
+              initialBatch={batchState}
               ensureTask={ensureTask}
+              onStartNewRound={startNewRound}
               onGenerated={addGeneratedAssets}
               taskId={taskId}
             />

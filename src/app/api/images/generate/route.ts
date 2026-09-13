@@ -122,8 +122,8 @@ export async function POST(request: Request) {
       ? await supabase
           .from("assets")
           .select("id, storage_bucket, storage_path, mime_type, size_bytes, width, height")
-          .eq("task_id", input.taskId)
           .in("id", input.referenceAssetIds)
+          .eq("user_id", user.id)
       : { data: [], error: null };
     if (referenceResult.error) throw referenceResult.error;
     if ((referenceResult.data?.length ?? 0) !== input.referenceAssetIds.length) {

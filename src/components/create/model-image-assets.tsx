@@ -17,6 +17,8 @@ import { cn } from "@/lib/utils";
 
 export type WorkspaceImageAsset = {
   id: string;
+  /** 这张图归属的 content_task。插入素材库里的旧任务图片时与当前轮次不同。 */
+  taskId?: string;
   storagePath: string;
   name: string;
   preview: string;

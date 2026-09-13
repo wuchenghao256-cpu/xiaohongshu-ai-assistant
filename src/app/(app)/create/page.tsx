@@ -1,6 +1,10 @@
+import { cookies } from "next/headers";
+import { z } from "zod";
 import { PageHeader } from "@/components/page-header";
 import { CreateWorkspace, type CreateWorkspaceInsertAsset } from "@/components/create/create-workspace";
 import { getSupabasePublicEnv, getImageAiConfigStatus, hasProviderEncryptionKey } from "@/lib/env";
+import { loadCreateSession, type CreateSession } from "@/lib/image-ai/create-session";
+import { CURRENT_TASK_COOKIE } from "@/lib/image-ai/current-task-cookie";
 import { listProviderConfigs } from "@/lib/providers/repository";
 import { getCurrentUser } from "@/lib/supabase/server";
 import { createClient } from "@/lib/supabase/server";
@@ -19,6 +23,7 @@ export default async function CreatePage({
   let templates: ContentTemplate[] = [];
   let savedImageProvider = false;
   let initialInsertAsset: CreateWorkspaceInsertAsset | undefined;
+  let initialSession: CreateSession | null = null;
   if (configured) {
     const supabase = await createClient();
     const result = await supabase
@@ -31,6 +36,13 @@ export default async function CreatePage({
     if (user && hasProviderEncryptionKey()) {
       const providers = await listProviderConfigs(user.id).catch(() => []);
       savedImageProvider = providers.some((item) => item.category === "image" && item.enabled);
+    }
+    // ?taskId= 是素材库/草稿带过来的显式意图，优先于 cookie 里上一轮的轮次标记。
+    const cookieTaskId = (await cookies()).get(CURRENT_TASK_COOKIE)?.value;
+    const candidateTaskId = requestedTaskId ?? (z.string().uuid().safeParse(cookieTaskId).success ? cookieTaskId! : null);
+    if (user && candidateTaskId) {
+      // 服务端按数据库事实判断这一轮还能不能继续用：额度没满就恢复，满了前端就会开新任务。
+      initialSession = await loadCreateSession(supabase, user.id, candidateTaskId);
     }
     // 素材库点「插入当前创作」会带 insertAssetId 跳进来，这里先把素材与签名链接准备好，
     // 避免客户端再走一次往返。
@@ -68,7 +80,7 @@ export default async function CreatePage({
         configured={configured}
         imageAiConfigured={getImageAiConfigStatus().configured || savedImageProvider}
         initialTemplates={templates}
-        initialTaskId={requestedTaskId}
+        initialSession={initialSession}
         initialInsertAsset={initialInsertAsset}
       />
     </>

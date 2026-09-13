@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { after } from "next/server";
 import { jsonError } from "@/lib/http";
+import { countTaskAssets, getLatestBatch, isBatchActive, presentBatch, type ServerSupabase } from "@/lib/image-ai/batches";
 import { getImageGenerationProvider } from "@/lib/image-ai/client";
 import { classifyImageFailure, logImageFailure, type ImageFailureCategory } from "@/lib/image-ai/failure";
+import { ROUND_ASSET_LIMIT } from "@/lib/image-ai/round";
 import { productImageRequestSchema } from "@/lib/image-ai/types";
 import { requireUser } from "@/lib/supabase/auth";
 import { IMAGE_RETRY_BASE_DELAY_MS, IMAGE_RETRY_MAX_ATTEMPTS, runWithConcurrency, withExponentialRetry } from "@/lib/jobs/orchestrator";
@@ -11,7 +13,6 @@ const createSchema = productImageRequestSchema.refine((value) => "mode" in value
 const retrySchema = z.object({ batchId: z.string().uuid() });
 export const maxDuration = 300;
 
-type ServerSupabase = Awaited<ReturnType<typeof requireUser>>["supabase"];
 type ChildRow = { id: string; position: number };
 class GenerateRequestError extends Error { constructor(message: string, readonly status: number, readonly category?: ImageFailureCategory) { super(message); } }
 
@@ -116,25 +117,24 @@ async function processBatch(input: z.infer<typeof createSchema>, batchId: string
   await finishBatch(supabase, batchId);
 }
 
-async function presentBatch(supabase: Awaited<ReturnType<typeof requireUser>>["supabase"], batchId: string) {
-  const batch = await supabase.from("image_batch_jobs").select("id,task_id,status,total_count,completed_count,failed_count,request_snapshot,created_at,updated_at").eq("id", batchId).single();
-  if (batch.error) throw batch.error;
-  const children = await supabase.from("image_child_jobs").select("id,position,status,attempts,asset_id,error_message,updated_at").eq("batch_id", batchId).order("position");
-  if (children.error) throw children.error;
-  const assetIds = (children.data ?? []).flatMap((item) => item.asset_id ? [item.asset_id] : []);
-  const assets = assetIds.length ? await supabase.from("assets").select("id,storage_path,original_name,mime_type,size_bytes").in("id", assetIds) : { data: [], error: null };
-  if (assets.error) throw assets.error;
-  const signedAssets = await Promise.all((assets.data ?? []).map(async (asset) => {
-    const signed = await supabase.storage.from("product-assets").createSignedUrl(asset.storage_path, 3600);
-    return signed.error ? null : { ...asset, signedUrl: signed.data.signedUrl };
-  }));
-  return { batch: batch.data, children: children.data ?? [], assets: signedAssets.filter(Boolean) };
-}
-
 export async function POST(request: Request) {
   try {
     const input = createSchema.parse(await request.json());
     const { user, supabase } = await requireUser();
+
+    // 生命周期护栏：一轮创作 = 一个 task 累计 9 张。额度用完就不再接受新批次，
+    // 前端应当先通过 /api/tasks 建新任务（见 create-workspace 的 ensureTask）。
+    const assetCount = await countTaskAssets(supabase, input.taskId);
+    if (assetCount + input.count > ROUND_ASSET_LIMIT) {
+      return Response.json({ error: `当前任务最多保存 ${ROUND_ASSET_LIMIT} 张图片。`, code: "TASK_FULL" }, { status: 409 });
+    }
+    // 进行中的批次不许追加：否则同一轮会并发跑两批，进度面板只显示最新一批，
+    // 前一批的失败也无法在界面上重试。
+    const latestBatch = await getLatestBatch(supabase, input.taskId);
+    if (isBatchActive(latestBatch?.status)) {
+      return Response.json({ error: "当前批次仍在生成中，请等待完成后再试。", code: "BATCH_IN_FLIGHT" }, { status: 409 });
+    }
+
     const batch = await supabase.from("image_batch_jobs").insert({
       user_id: user.id, task_id: input.taskId, total_count: input.count,
       request_snapshot: input,
@@ -162,9 +162,8 @@ export async function GET(request: Request) {
   try {
     const taskId = z.string().uuid().parse(new URL(request.url).searchParams.get("taskId"));
     const { supabase } = await requireUser();
-    const latest = await supabase.from("image_batch_jobs").select("id").eq("task_id", taskId).order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (latest.error) throw latest.error;
-    return Response.json(latest.data ? await presentBatch(supabase, latest.data.id) : { batch: null, children: [], assets: [] });
+    const latest = await getLatestBatch(supabase, taskId);
+    return Response.json(latest ? await presentBatch(supabase, latest.id) : { batch: null, children: [], assets: [] });
   } catch (error) {
     // 轮询失败必须让前端看见：静默返回错误会让页面停在「生成中」永远转圈。
     return jsonError(withContext(error, "查询图片任务进度失败"));
