@@ -11,6 +11,7 @@ import {
   modelGenderLabels,
   modelImageAspectRatios,
   modelImageTemplates,
+  modelProductCategories,
   modelProductCategoryLabels,
   modelProductFocusLabels,
   modelStyleLabels,
@@ -137,7 +138,7 @@ export function AiImageGenerator({
           <FieldLabel htmlFor="model-product-category">商品类目</FieldLabel>
           <Select value={productCategory} onValueChange={(value) => value && setProductCategory(value as ModelProductCategory)}>
             <SelectTrigger id="model-product-category" className="w-full"><SelectValue>{modelProductCategoryLabels[productCategory]}</SelectValue></SelectTrigger>
-            <SelectContent>{(["bag", "shoes"] as const).map((value) => <SelectItem key={value} value={value}>{modelProductCategoryLabels[value]}</SelectItem>)}</SelectContent>
+            <SelectContent>{modelProductCategories.map((value) => <SelectItem key={value} value={value}>{modelProductCategoryLabels[value]}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
         <Field>

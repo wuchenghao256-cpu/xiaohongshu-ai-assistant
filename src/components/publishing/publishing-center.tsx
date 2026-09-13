@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ImagePreviewGallery, ImagePreviewTrigger, type PreviewImage } from "@/components/images/image-preview-gallery";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,7 @@ export type PublishingPost = {
   body: string;
   hashtags: string[];
   selectedImageCount: number;
+  images: PreviewImage[];
 };
 
 export type PublishingJobView = {
@@ -145,6 +147,7 @@ export function PublishingCenter({
         <div className="min-w-0 rounded-lg border bg-muted/20 p-4">
           {post ? <>
             <div className="flex items-start justify-between gap-4"><p className="truncate font-medium">{post.title}</p><span className="shrink-0 text-xs text-muted-foreground">{post.selectedImageCount} 张发布图</span></div>
+            {post.images.length ? <ImagePreviewGallery images={post.images}>{({ openPreview }) => <div className="mt-3 flex max-w-full gap-2 overflow-x-auto pb-1">{post.images.map((image, index) => <div key={image.id} className="relative size-16 shrink-0 overflow-hidden rounded-lg border"><ImagePreviewTrigger image={image} onOpen={() => openPreview(index)} sizes="64px" /></div>)}</div>}</ImagePreviewGallery> : null}
             <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{post.body}</p>
             <p className="mt-2 truncate text-xs text-muted-foreground">{hashtags || "暂无 hashtags"}</p>
           </> : <p className="py-4 text-center text-sm text-muted-foreground">请先在创建内容中选择最终文案。</p>}

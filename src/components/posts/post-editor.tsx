@@ -1,9 +1,9 @@
 "use client";
 
 import { CheckCircle2, Copy, Download, Loader2, Save, Send } from "lucide-react";
-import Image from "next/image";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ImagePreviewGallery, ImagePreviewTrigger } from "@/components/images/image-preview-gallery";
 import { XiaohongshuShareActions } from "@/components/publishing/xiaohongshu-share-actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -122,7 +122,7 @@ export function PostEditor({ initialPost, assets: initialAssets }: { initialPost
       <Alert><CheckCircle2 /><AlertTitle>人工发布确认</AlertTitle><AlertDescription>图片可交给系统分享面板，但仍需在小红书内完成最终发布。</AlertDescription></Alert>
       <Card className="min-w-0">
         <CardHeader><CardTitle className="text-base">待发布图片</CardTitle><CardDescription>已选 {selectedAssets.length} / {assets.length} 张</CardDescription></CardHeader>
-        <CardContent>{assets.length ? <div className="grid grid-cols-2 gap-2">{assets.map((asset) => <div key={asset.id} className="relative aspect-square min-w-0 overflow-hidden rounded-lg border"><Image unoptimized fill sizes="140px" src={asset.url} alt={asset.name} className={asset.selected ? "object-cover" : "object-cover opacity-45"} /><a href={`/api/assets/${asset.id}/download`} download={asset.name} className="absolute right-1 top-1 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium" aria-label={`下载 ${asset.name}`}>下载</a><button type="button" aria-pressed={asset.selected} onClick={() => toggleAsset(asset)} className="absolute inset-x-1 bottom-1 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium">{asset.selected ? "已选作发布图" : "选作发布图"}</button></div>)}</div> : <p className="text-sm text-muted-foreground">这个任务没有上传图片。</p>}</CardContent>
+        <CardContent>{assets.length ? <ImagePreviewGallery images={assets.map((asset) => ({ id: asset.id, src: asset.url, alt: asset.name }))}>{({ openPreview }) => <div className="grid grid-cols-2 gap-2">{assets.map((asset, index) => { const previewImage = { id: asset.id, src: asset.url, alt: asset.name }; return <div key={asset.id} className="relative aspect-square min-w-0 overflow-hidden rounded-lg border"><ImagePreviewTrigger image={previewImage} onOpen={() => openPreview(index)} sizes="140px" imageClassName={asset.selected ? undefined : "opacity-45"} /><a href={`/api/assets/${asset.id}/download`} download={asset.name} className="absolute right-1 top-1 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium" aria-label={`下载 ${asset.name}`}>下载</a><button type="button" aria-pressed={asset.selected} onClick={() => toggleAsset(asset)} className="absolute inset-x-1 bottom-1 rounded-md bg-background/90 px-2 py-1 text-[11px] font-medium">{asset.selected ? "已选作发布图" : "选作发布图"}</button></div>; })}</div>}</ImagePreviewGallery> : <p className="text-sm text-muted-foreground">这个任务没有上传图片。</p>}</CardContent>
       </Card>
       <XiaohongshuShareActions
         key={selectedAssets.map((asset) => asset.id).sort().join(",")}

@@ -1,4 +1,4 @@
-export const modelProductCategories = ["bag", "shoes"] as const;
+export const modelProductCategories = ["bag", "shoes", "clothing", "pants"] as const;
 export const modelGenders = ["female", "male"] as const;
 export const modelStyles = ["luxury", "street", "minimalist", "lifestyle"] as const;
 export const modelFramings = ["full_body", "half_body", "close_up", "product_focus"] as const;
@@ -32,7 +32,7 @@ export type ModelImageTemplate = {
   isDefault: boolean;
 };
 
-export const defaultNegativePrompt = "watermark, text, logo overlay, collage, split screen, extra limbs, extra fingers, malformed hands, duplicated product, multiple bags, duplicated shoes, blurry product, low resolution, distorted proportions, messy background, cartoon, illustration, frame, border";
+export const defaultNegativePrompt = "watermark, text, logo overlay, collage, split screen, extra limbs, extra fingers, malformed hands, duplicated product, duplicated garment, duplicated clothing, duplicated pants, multiple bags, duplicated shoes, blurry product, low resolution, distorted body, distorted proportions, unrealistic anatomy, warped fabric, messy background, cartoon, illustration, frame, border";
 
 export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
@@ -125,13 +125,108 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
     negativePromptTemplate: defaultNegativePrompt,
     isDefault: false,
   },
+  {
+    id: "female-clothing-street",
+    name: "欧美女模-服装-街拍",
+    productCategory: "clothing",
+    gender: "female",
+    style: "street",
+    framing: "full_body",
+    pose: "walking",
+    scene: "street",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a premium street-fashion product photo featuring a contemporary Western female model wearing the provided clothing. Keep the full garment clearly visible, with its silhouette, cut, color, fabric appearance, and distinctive details closely matching the reference. Use natural movement, realistic body proportions, clean urban light, and editorial e-commerce quality. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "female-clothing-indoor",
+    name: "欧美女模-服装-室内轻奢",
+    productCategory: "clothing",
+    gender: "female",
+    style: "luxury",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "indoor_minimal",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create an elegant indoor fashion image featuring a Western female model wearing the provided clothing. Present the complete garment unobstructed, accurately preserving its silhouette, fit, color, fabric appearance, and visible construction details. Use refined lighting, realistic anatomy, and a clean luxury editorial composition. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-clothing-minimal",
+    name: "欧美男模-服装-极简风",
+    productCategory: "clothing",
+    gender: "male",
+    style: "minimalist",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a refined minimalist product image featuring a Western male model wearing the provided clothing. Keep the garment fully visible and faithful to the reference in silhouette, proportions, color, fabric appearance, and distinctive details. Use a restrained studio setting, natural posture, realistic anatomy, and premium e-commerce lighting. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "female-pants-full-body",
+    name: "欧美女模-裤子-全身展示",
+    productCategory: "pants",
+    gender: "female",
+    style: "lifestyle",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a full-body fashion product image featuring a Western female model wearing the provided pants. Keep both legs and the entire pants silhouette visible from waistband to hem, accurately preserving the fit, rise, length, color, fabric appearance, and visible details. Use a natural balanced stance, realistic body proportions, and clean premium lighting. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-pants-street",
+    name: "欧美男模-裤子-街拍",
+    productCategory: "pants",
+    gender: "male",
+    style: "street",
+    framing: "full_body",
+    pose: "walking",
+    scene: "street",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a modern street-fashion product photo featuring a Western male model wearing the provided pants. Show the pants clearly from waistband to hem during a natural walking pose, preserving the reference fit, cut, length, color, fabric appearance, and visible details. Keep realistic leg proportions and premium editorial clarity. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "female-pants-product-focus",
+    name: "欧美女模-裤子-商品突出",
+    productCategory: "pants",
+    gender: "female",
+    style: "luxury",
+    framing: "product_focus",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a product-focused fashion image featuring a Western female model wearing the provided pants. Make the pants the unmistakable visual focus, fully visible from waistband to hem and unobstructed, with fit, cut, length, color, fabric appearance, and details closely matching the reference. Use realistic anatomy, clean studio lighting, and premium e-commerce clarity. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
 ] as const;
 
 export function getModelImageTemplate(templateId: string) {
   return modelImageTemplates.find((template) => template.id === templateId);
 }
 
-export const modelProductCategoryLabels: Record<ModelProductCategory, string> = { bag: "包", shoes: "鞋" };
+export const modelProductCategoryLabels: Record<ModelProductCategory, string> = {
+  bag: "包",
+  shoes: "鞋",
+  clothing: "服装",
+  pants: "裤子",
+};
 export const modelGenderLabels: Record<ModelGender, string> = { female: "女", male: "男" };
 export const modelStyleLabels: Record<ModelStyle, string> = {
   luxury: "高端轻奢",

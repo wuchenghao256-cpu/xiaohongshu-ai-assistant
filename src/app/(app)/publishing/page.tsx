@@ -42,10 +42,21 @@ export default async function PublishingPage() {
     }
 
     const taskIds = (postsResult.data ?? []).map((post) => post.task_id);
+    const assetsByTask = new Map<string, PublishingPost["images"]>();
     const assetCounts = new Map<string, number>();
     if (taskIds.length) {
-      const assetsResult = await supabase.from("assets").select("task_id").in("task_id", taskIds).eq("selected_for_publishing", true);
+      const assetsResult = await supabase.from("assets").select("id,task_id,storage_bucket,storage_path,original_name").in("task_id", taskIds).eq("selected_for_publishing", true).order("created_at");
       for (const asset of assetsResult.data ?? []) assetCounts.set(asset.task_id, (assetCounts.get(asset.task_id) ?? 0) + 1);
+      const signedAssets = await Promise.all((assetsResult.data ?? []).map(async (asset) => {
+        const signed = await supabase.storage.from(asset.storage_bucket).createSignedUrl(asset.storage_path, 3600);
+        return signed.data?.signedUrl ? { ...asset, signedUrl: signed.data.signedUrl } : null;
+      }));
+      for (const asset of signedAssets) {
+        if (!asset) continue;
+        const images = assetsByTask.get(asset.task_id) ?? [];
+        images.push({ id: asset.id, src: asset.signedUrl, alt: asset.original_name });
+        assetsByTask.set(asset.task_id, images);
+      }
     }
     posts = (postsResult.data ?? []).map((post) => ({
       id: post.id,
@@ -53,6 +64,7 @@ export default async function PublishingPage() {
       body: post.body,
       hashtags: post.hashtags,
       selectedImageCount: assetCounts.get(post.task_id) ?? 0,
+      images: assetsByTask.get(post.task_id) ?? [],
     }));
 
     jobs = (jobsResult.data ?? []).map((job) => ({

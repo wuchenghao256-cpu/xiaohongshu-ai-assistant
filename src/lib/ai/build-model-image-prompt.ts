@@ -10,6 +10,8 @@ import type {
 const categoryInstructions: Record<ModelProductCategory, string> = {
   bag: "Treat the uploaded bag as the primary product reference. Show exactly one matching bag, naturally carried by the model.",
   shoes: "Treat the uploaded shoes as the primary product reference. Show one matching pair worn naturally by the model.",
+  clothing: "Treat the uploaded clothing as the primary product reference. The model must wear exactly one matching garment. Keep its complete silhouette, fit, cut, color, fabric appearance, and distinctive details visible and unobstructed, with realistic body and garment proportions.",
+  pants: "Treat the uploaded pants as the primary product reference. The model must wear exactly one matching pair. Keep the pants visible from waistband to hem, preserve their fit, cut, length, color, fabric appearance, and details, and maintain realistic waist, hip, leg, and body proportions.",
 };
 
 const genderInstructions: Record<ModelGender, string> = {
@@ -59,7 +61,7 @@ export function buildModelImagePrompt(input: ModelImagePromptInput): ModelImageP
       focusInstructions[input.productFocus],
       referenceInstruction,
       `Composition settings: ${input.template.framing.replaceAll("_", " ")} framing, ${input.template.pose.replaceAll("_", " ")} pose, ${input.template.scene.replaceAll("_", " ")} scene.`,
-      "Create one realistic, high-resolution, premium e-commerce image suitable for social media. Do not add a watermark, text overlay, border, collage, or split screen.",
+      "Create one realistic, high-resolution, premium e-commerce image suitable for social media. Keep the product stable and clearly identifiable. Do not add a watermark, text overlay, border, collage, split screen, duplicate product, deformed body, or unrealistic proportions.",
     ].join("\n"),
     negativePrompt: input.template.negativePromptTemplate,
   };
