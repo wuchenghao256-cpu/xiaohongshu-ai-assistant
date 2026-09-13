@@ -11,6 +11,7 @@ const assetSchema = z.object({
   sizeBytes: z.number().int().positive().max(8 * 1024 * 1024),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
+  selectedForPublishing: z.boolean().default(true),
 });
 
 const selectionSchema = z.object({
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
       size_bytes: input.sizeBytes,
       width: input.width ?? null,
       height: input.height ?? null,
+      selected_for_publishing: input.selectedForPublishing,
     }).select("id, storage_path, original_name, mime_type, size_bytes").single();
     if (error) throw error;
     return Response.json({ asset: data }, { status: 201 });

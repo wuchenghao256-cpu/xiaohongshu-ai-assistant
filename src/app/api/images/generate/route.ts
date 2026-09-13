@@ -135,7 +135,8 @@ export async function POST(request: Request) {
         gender: input.gender,
         style: input.style,
         productFocus: input.productFocus,
-        hasReference: references.length > 0,
+        generationMode: input.generationMode,
+        referenceCount: references.length,
       });
       generated = await generateModelProductImages({
         prompt: prompt.positivePrompt,

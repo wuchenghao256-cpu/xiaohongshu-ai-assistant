@@ -1,6 +1,7 @@
 import "server-only";
 import type {
   ModelGender,
+  ModelGenerationMode,
   ModelImageTemplate,
   ModelProductCategory,
   ModelProductFocus,
@@ -31,6 +32,18 @@ const focusInstructions: Record<ModelProductFocus, string> = {
   balanced: "Balance the model and product while keeping the product clear, unobstructed, and easy to identify.",
 };
 
+const generationModeInstructions: Record<ModelGenerationMode, string> = {
+  fidelity: "FIDELITY MODE: Product accuracy is the first priority. Use minimal creative freedom, a clean background, straightforward styling, and a simple stable pose. Do not redesign, restyle, crop away, conceal, or reinterpret the product.",
+  editorial: "EDITORIAL MODE: Use stronger premium fashion styling, a more expressive but anatomically natural pose, and a polished fashion-forward composition. Light styling variation is allowed, but the product must remain clearly visible and faithful to its identity.",
+};
+
+const clothingFramingInstructions: Record<ModelProductCategory, string> = {
+  bag: "Keep the bag fully visible and naturally supported by the model.",
+  shoes: "Keep the complete matching pair visible and naturally worn by the model.",
+  clothing: "For tops and garments, use half-body or full-body framing according to the template. Preserve the overall silhouette, neckline shape, sleeve length, hem length, fit and looseness, print or graphic placement, main front design position, dominant colors, and product identity as closely as possible.",
+  pants: "Prefer full-body or lower-body-emphasis framing. Show the pants continuously from waistband to hem and preserve the silhouette, rise, fit and looseness, length, leg shape, print placement, dominant colors, and product identity as closely as possible.",
+};
+
 export type ModelImagePromptInput = {
   template: ModelImageTemplate;
   productName: string;
@@ -38,7 +51,8 @@ export type ModelImagePromptInput = {
   gender: ModelGender;
   style: ModelStyle;
   productFocus: ModelProductFocus;
-  hasReference: boolean;
+  generationMode: ModelGenerationMode;
+  referenceCount: number;
 };
 
 export type ModelImagePrompt = {
@@ -47,8 +61,8 @@ export type ModelImagePrompt = {
 };
 
 export function buildModelImagePrompt(input: ModelImagePromptInput): ModelImagePrompt {
-  const referenceInstruction = input.hasReference
-    ? "The first uploaded image is the primary product reference. Preserve its visible shape, color, proportions, material appearance, and existing product details as closely as the model allows. Do not invent extra products, accessories, branding, or unobserved features."
+  const referenceInstruction = input.referenceCount > 0
+    ? `Use all ${input.referenceCount} uploaded reference images together. The first image is the Primary Reference (Front); subsequent images provide Back, Detail, and Logo or Print Detail context in that order when present. Reconcile them into one consistent product. Preserve visible shape, color, proportions, material appearance, construction, logos, prints, and existing product details as closely as possible. Do not invent extra products, accessories, branding, or unobserved features.`
     : "Do not invent branding, logos, product text, accessories, certifications, or unobserved product features.";
 
   return {
@@ -59,9 +73,11 @@ export function buildModelImagePrompt(input: ModelImagePromptInput): ModelImageP
       genderInstructions[input.gender],
       styleInstructions[input.style],
       focusInstructions[input.productFocus],
+      generationModeInstructions[input.generationMode],
+      clothingFramingInstructions[input.productCategory],
       referenceInstruction,
       `Composition settings: ${input.template.framing.replaceAll("_", " ")} framing, ${input.template.pose.replaceAll("_", " ")} pose, ${input.template.scene.replaceAll("_", " ")} scene.`,
-      "Create one realistic, high-resolution, premium e-commerce image suitable for social media. Keep the product stable and clearly identifiable. Do not add a watermark, text overlay, border, collage, split screen, duplicate product, deformed body, or unrealistic proportions.",
+      "Use realistic lighting, polished styling, a premium fashion editorial aesthetic, and a luxury fashion-forward composition suitable for social media and e-commerce. Keep the product stable, visually important, and clearly identifiable. No watermark, text overlay, collage, split screen, frame, border, deformed hands, malformed limbs, duplicated garment, distorted print, floating product, low resolution, or messy background.",
     ].join("\n"),
     negativePrompt: input.template.negativePromptTemplate,
   };

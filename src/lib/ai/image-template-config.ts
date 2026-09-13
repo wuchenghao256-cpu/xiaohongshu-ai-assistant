@@ -6,6 +6,7 @@ export const modelPoses = ["hand_carry", "shoulder_carry", "walking", "sitting",
 export const modelScenes = ["studio", "street", "cafe", "indoor_minimal"] as const;
 export const modelImageAspectRatios = ["4:5", "3:4", "1:1", "9:16"] as const;
 export const modelProductFocusOptions = ["product", "balanced"] as const;
+export const modelGenerationModes = ["fidelity", "editorial"] as const;
 
 export type ModelProductCategory = (typeof modelProductCategories)[number];
 export type ModelGender = (typeof modelGenders)[number];
@@ -15,6 +16,7 @@ export type ModelPose = (typeof modelPoses)[number];
 export type ModelScene = (typeof modelScenes)[number];
 export type ModelImageAspectRatio = (typeof modelImageAspectRatios)[number];
 export type ModelProductFocus = (typeof modelProductFocusOptions)[number];
+export type ModelGenerationMode = (typeof modelGenerationModes)[number];
 
 export type ModelImageTemplate = {
   id: string;
@@ -32,7 +34,7 @@ export type ModelImageTemplate = {
   isDefault: boolean;
 };
 
-export const defaultNegativePrompt = "watermark, text, logo overlay, collage, split screen, extra limbs, extra fingers, malformed hands, duplicated product, duplicated garment, duplicated clothing, duplicated pants, multiple bags, duplicated shoes, blurry product, low resolution, distorted body, distorted proportions, unrealistic anatomy, warped fabric, messy background, cartoon, illustration, frame, border";
+export const defaultNegativePrompt = "watermark, text overlay, logo overlay, collage, split screen, frame, border, extra limbs, extra fingers, malformed hands, malformed limbs, duplicated product, duplicated garment, duplicated clothing, duplicated pants, multiple bags, duplicated shoes, distorted print, misplaced graphic, floating product, blurry product, low resolution, distorted body, distorted proportions, unrealistic anatomy, warped fabric, messy background, cartoon, illustration";
 
 export const modelImageTemplates: readonly ModelImageTemplate[] = [
   {
@@ -215,6 +217,141 @@ export const modelImageTemplates: readonly ModelImageTemplate[] = [
     negativePromptTemplate: defaultNegativePrompt,
     isDefault: false,
   },
+  {
+    id: "male-top-minimal-full-body-studio",
+    name: "欧美男模-上衣-极简全身棚拍",
+    productCategory: "clothing",
+    gender: "male",
+    style: "minimalist",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a refined full-body studio fashion image featuring a Western male model wearing the provided top. Use a minimal seamless background and a simple natural stance. Keep the entire top clearly visible and preserve its silhouette, fit, neckline, sleeve length, hem length, dominant colors, and front design placement. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-top-street-oversized",
+    name: "欧美男模-上衣-街头宽松站姿",
+    productCategory: "clothing",
+    gender: "male",
+    style: "street",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "street",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a high-end streetwear image featuring a Western male model in a relaxed standing pose wearing the provided top. Preserve the oversized or relaxed fit, shoulder line, sleeve length, hem length, colors, and exact front graphic placement. Use clean urban styling and realistic premium editorial lighting. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-top-indoor-editorial",
+    name: "欧美男模-上衣-室内时尚大片",
+    productCategory: "clothing",
+    gender: "male",
+    style: "luxury",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "indoor_minimal",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a premium indoor fashion editorial featuring a Western male model wearing the provided top. Use polished styling and expressive but natural posture while keeping the garment unobstructed. Preserve its silhouette, fit, neckline, sleeves, hem, colors, fabric appearance, and graphic placement. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-top-half-body-product-focus",
+    name: "欧美男模-上衣-上半身商品突出",
+    productCategory: "clothing",
+    gender: "male",
+    style: "luxury",
+    framing: "product_focus",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a product-focused upper-body fashion image featuring a Western male model wearing the provided top. Keep the neckline, shoulder shape, sleeves, chest area, main front design, and hem visible whenever the garment length allows. Product identity and detail fidelity take priority. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-top-urban-walking",
+    name: "欧美男模-上衣-都市随性行走",
+    productCategory: "clothing",
+    gender: "male",
+    style: "lifestyle",
+    framing: "full_body",
+    pose: "walking",
+    scene: "street",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a polished urban lifestyle image featuring a Western male model walking naturally in the provided top. Keep movement restrained so the top remains clear and accurately preserves its silhouette, fit, neckline, sleeve and hem length, colors, and front design position. Use realistic city light and premium styling. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-top-minimal-ecommerce",
+    name: "欧美男模-上衣-极简电商感",
+    productCategory: "clothing",
+    gender: "male",
+    style: "minimalist",
+    framing: "half_body",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a clean premium e-commerce image featuring a Western male model wearing the provided top. Use a simple front-facing pose and neutral studio background. Preserve the garment silhouette, fit, neckline, sleeve length, hem length, colors, fabric appearance, print scale, and graphic placement with minimal creative alteration. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-pants-full-body-display",
+    name: "欧美男模-裤子-全身展示",
+    productCategory: "pants",
+    gender: "male",
+    style: "minimalist",
+    framing: "full_body",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a clean full-body fashion image featuring a Western male model wearing the provided pants. Show the pants continuously from waistband to hem, including both legs, and preserve the rise, silhouette, looseness, length, leg opening, dominant colors, fabric appearance, and visible details. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-pants-street-walking",
+    name: "欧美男模-裤子-街头行走",
+    productCategory: "pants",
+    gender: "male",
+    style: "street",
+    framing: "full_body",
+    pose: "walking",
+    scene: "street",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a high-end street-fashion image featuring a Western male model walking naturally in the provided pants. Keep the stride controlled and both pant legs clearly readable. Preserve the waistband, rise, silhouette, fit, length, leg opening, colors, and details while using realistic urban lighting. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
+  {
+    id: "male-pants-product-focus",
+    name: "欧美男模-裤子-裤型商品突出",
+    productCategory: "pants",
+    gender: "male",
+    style: "luxury",
+    framing: "product_focus",
+    pose: "wearing",
+    scene: "studio",
+    aspectRatio: "4:5",
+    shotsCountDefault: 4,
+    promptTemplate: "Create a product-first fashion image featuring a Western male model wearing the provided pants. Make the pants the dominant visual subject and keep them unobstructed from waistband to hem. Closely preserve their cut, rise, fit, looseness, length, leg shape, colors, fabric appearance, and design details. No watermark, no text, no collage.",
+    negativePromptTemplate: defaultNegativePrompt,
+    isDefault: false,
+  },
 ] as const;
 
 export function getModelImageTemplate(templateId: string) {
@@ -237,4 +374,8 @@ export const modelStyleLabels: Record<ModelStyle, string> = {
 export const modelProductFocusLabels: Record<ModelProductFocus, string> = {
   product: "商品优先",
   balanced: "模特与商品平衡",
+};
+export const modelGenerationModeLabels: Record<ModelGenerationMode, string> = {
+  fidelity: "高保真",
+  editorial: "高级风格",
 };

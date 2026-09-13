@@ -9,13 +9,17 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   modelGenderLabels,
+  modelGenerationModeLabels,
+  modelGenerationModes,
   modelImageAspectRatios,
   modelImageTemplates,
   modelProductCategories,
   modelProductCategoryLabels,
   modelProductFocusLabels,
+  modelStyles,
   modelStyleLabels,
   type ModelGender,
+  type ModelGenerationMode,
   type ModelImageAspectRatio,
   type ModelProductCategory,
   type ModelProductFocus,
@@ -30,7 +34,6 @@ export type GeneratedAssetRecord = {
   signedUrl: string;
 };
 
-const selectableStyles: ModelStyle[] = ["luxury", "street", "minimalist"];
 const generationCounts = [1, 2, 4] as const;
 
 export function AiImageGenerator({
@@ -56,6 +59,7 @@ export function AiImageGenerator({
   const [aspectRatio, setAspectRatio] = useState<ModelImageAspectRatio>(defaultTemplate.aspectRatio);
   const [count, setCount] = useState<1 | 2 | 4>(defaultTemplate.shotsCountDefault);
   const [productFocus, setProductFocus] = useState<ModelProductFocus>("product");
+  const [generationMode, setGenerationMode] = useState<ModelGenerationMode>("fidelity");
   const [generating, setGenerating] = useState(false);
   const selectedTemplate = modelImageTemplates.find((template) => template.id === templateId) ?? defaultTemplate;
   const exceedsAssetLimit = existingAssetCount + count > 9;
@@ -71,6 +75,7 @@ export function AiImageGenerator({
     setAspectRatio(template.aspectRatio);
     setCount(template.shotsCountDefault);
     setProductFocus(template.framing === "product_focus" ? "product" : "balanced");
+    setGenerationMode("fidelity");
   }
 
   async function generate() {
@@ -99,6 +104,7 @@ export function AiImageGenerator({
           aspectRatio,
           count,
           productFocus,
+          generationMode,
         }),
       });
       const data = await response.json() as { assets?: GeneratedAssetRecord[]; error?: string };
@@ -112,7 +118,7 @@ export function AiImageGenerator({
     }
   }
 
-  return <Card className="mt-3 bg-muted/20 shadow-none">
+  return <Card className="bg-muted/20 shadow-none">
     <CardHeader className="pb-3">
       <CardTitle className="text-base">AI 模特商品图</CardTitle>
       <CardDescription>
@@ -134,9 +140,17 @@ export function AiImageGenerator({
       </Field>
 
       <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor="model-generation-mode">生成模式</FieldLabel>
+          <Select value={generationMode} onValueChange={(value) => value && setGenerationMode(value as ModelGenerationMode)}>
+            <SelectTrigger id="model-generation-mode" className="w-full"><SelectValue>{modelGenerationModeLabels[generationMode]}</SelectValue></SelectTrigger>
+            <SelectContent>{modelGenerationModes.map((value) => <SelectItem key={value} value={value}>{modelGenerationModeLabels[value]}</SelectItem>)}</SelectContent>
+          </Select>
+          <p className="text-xs leading-5 text-muted-foreground">高保真优先保留版型与图案；高级风格增强时尚表现，但仍保持商品清晰。</p>
+        </Field>
         <Field>
           <FieldLabel htmlFor="model-product-category">商品类目</FieldLabel>
-          <Select value={productCategory} onValueChange={(value) => value && setProductCategory(value as ModelProductCategory)}>
+          <Select value={productCategory} onValueChange={(value) => { if (!value) return; const category = value as ModelProductCategory; setProductCategory(category); if (category === "clothing" || category === "pants") setGenerationMode("fidelity"); }}>
             <SelectTrigger id="model-product-category" className="w-full"><SelectValue>{modelProductCategoryLabels[productCategory]}</SelectValue></SelectTrigger>
             <SelectContent>{modelProductCategories.map((value) => <SelectItem key={value} value={value}>{modelProductCategoryLabels[value]}</SelectItem>)}</SelectContent>
           </Select>
@@ -152,7 +166,7 @@ export function AiImageGenerator({
           <FieldLabel htmlFor="model-style">风格</FieldLabel>
           <Select value={style} onValueChange={(value) => value && setStyle(value as ModelStyle)}>
             <SelectTrigger id="model-style" className="w-full"><SelectValue>{modelStyleLabels[style]}</SelectValue></SelectTrigger>
-            <SelectContent>{selectableStyles.map((value) => <SelectItem key={value} value={value}>{modelStyleLabels[value]}</SelectItem>)}</SelectContent>
+            <SelectContent>{modelStyles.map((value) => <SelectItem key={value} value={value}>{modelStyleLabels[value]}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
         <Field>
