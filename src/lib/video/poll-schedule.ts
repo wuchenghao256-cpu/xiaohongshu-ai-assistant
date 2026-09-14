@@ -7,8 +7,12 @@
 const POLL_DELAYS_SECONDS = [5, 10, 15, 20, 25, 30] as const;
 /** 超过该时长仍未完成则停止轮询并提示用户，防止无限查询。 */
 export const POLL_TIMEOUT_MS = 45 * 60 * 1000;
-/** 已入库但长时间没有 Provider 任务 ID 的记录视为提交中断。 */
-const STRANDED_AFTER_MS = 3 * 60 * 1000;
+/**
+ * 已入库但长时间没有 Provider 任务 ID 的记录视为提交中断。
+ * 必须大于创建请求的最坏耗时（CREATE_TIMEOUT_MS 90 秒 + 限流重试退避 0.8/1.6 秒），
+ * 否则用户点下生成后正常等待的第二分钟就会被判成「创建未完成」。
+ */
+const STRANDED_AFTER_MS = 4 * 60 * 1000;
 
 export function pollDelaySeconds(attempts: number) {
   return POLL_DELAYS_SECONDS[Math.min(Math.max(attempts, 0), POLL_DELAYS_SECONDS.length - 1)];
@@ -29,7 +33,8 @@ export function hasPollingTimedOut(submittedAt: string | null | undefined, now =
 
 /**
  * 任务已入库但从未拿到 Provider 任务 ID（例如服务端在提交过程中被中断）。
- * 这类任务永远不会被轮询，必须显式标记失败，否则会一直停留在“排队中”。
+ * 这类任务永远不会被轮询，也不会被服务端查询链路自动收敛，必须由用户在任务卡片上
+ * 显式确认「没有生成」后清理，否则会一直停留在“排队中”。
  */
 export function isStrandedQueuedJob(job: { status: string; external_task_id: string | null; created_at: string }, now = Date.now()) {
   if (job.status !== "queued" || job.external_task_id) return false;

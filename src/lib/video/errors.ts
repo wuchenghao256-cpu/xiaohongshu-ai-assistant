@@ -9,7 +9,8 @@ import { SeedanceError } from "./seedance-mapping.ts";
  */
 export function toUserMessage(error: unknown, fallback = "视频生成失败，请重试。") {
   if (error instanceof Error) {
-    console.error("Video task error", { name: error.name, message: error.message });
+    // 记录错误分类就够定位问题，不打印 message：message 可能带请求内容。
+    console.error("Video task error", { name: error.name, code: error instanceof SeedanceError ? error.code : "unknown" });
   }
   if (error instanceof SeedanceError) return error.message;
   return fallback;

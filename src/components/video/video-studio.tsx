@@ -1,8 +1,8 @@
 "use client";
 
-import { Clapperboard, ImagePlay, Loader2, RefreshCw, Save, Sparkles, Upload, UserRound } from "lucide-react";
+import { AlertTriangle, Clapperboard, ImagePlay, Loader2, RefreshCw, RotateCcw, Save, Sparkles, Upload, UserRound, X } from "lucide-react";
 import Image from "next/image";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,8 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { jobStatusLabel, markRecoverable, visibleJobs, type VideoJob } from "@/components/video/job-state";
+import { useVideoJobs } from "@/components/video/use-video-jobs";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { MAX_REFERENCE_IMAGES, productCategories, productCategoryLabels, type ProductCategory } from "@/lib/video/types";
@@ -19,16 +21,6 @@ import { MAX_REFERENCE_IMAGES, productCategories, productCategoryLabels, type Pr
 type Mode = "image_to_video" | "product_ad" | "product_ugc";
 type Provider = "volcengine" | "runway";
 type UploadItem = { path: string; name: string; preview: string };
-type VideoJob = {
-  id: string;
-  kind: Mode;
-  status: "queued" | "generating" | "completed" | "failed";
-  progress: number;
-  output_url?: string | null;
-  error_message?: string | null;
-  created_at: string;
-  saved?: boolean;
-};
 
 const modeCards = [
   { id: "image_to_video" as const, title: "图片动起来", description: "单图生成 4–15 秒动态视频", icon: ImagePlay },
@@ -36,11 +28,19 @@ const modeCards = [
   { id: "product_ugc" as const, title: "AI UGC", description: "9:16 真人商品介绍视频", icon: UserRound },
 ];
 
-const statusLabels = { queued: "排队中", generating: "生成中", completed: "已完成", failed: "失败" };
 const durations = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const ratioLabels = { portrait: "竖屏 9:16", landscape: "横屏 16:9" };
 /** Seedance 2.0 fast 最高 720p；标准版支持 1080p。 */
 const resolutionsFor = (model: string) => (model.includes("fast") ? ["480p", "720p"] : ["720p", "1080p"]);
+
+/**
+ * 创建阶段的失败分类。超时 / 网关错误 / 断网时本地拿不到 upstream task id，
+ * 也就是无法确定方舟是否已经受理并计费 —— 这种失败必须走「恢复任务」，
+ * 提示用户用「重试」会直接再扣一次费。
+ */
+function isUndeterminedCreateFailure(message: string) {
+  return /可能已在生成服务中创建|响应超时|创建未完成|无法连接火山方舟|暂时不可用/.test(message);
+}
 
 export function VideoStudio({
   configured,
@@ -59,10 +59,6 @@ export function VideoStudio({
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [creating, setCreating] = useState(false);
-  // 正在处理的任务操作，用于禁用按钮，避免连点产生两个付费任务。
-  const [acting, setActing] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [duration, setDuration] = useState(10);
   const [orientation, setOrientation] = useState<"landscape" | "portrait">("portrait");
   const [resolution, setResolution] = useState<"480p" | "720p" | "1080p">("720p");
@@ -71,42 +67,26 @@ export function VideoStudio({
   const [prompt, setPrompt] = useState("");
   const [productInfo, setProductInfo] = useState("");
   const [concept, setConcept] = useState("");
-  // 同一轮提交复用同一个幂等令牌；提交结束后立即作废，允许用户再次尝试。
+  const [recovering, setRecovering] = useState<string | null>(null);
+  const [recoverTaskId, setRecoverTaskId] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  // 同一轮提交复用同一个幂等令牌，提交结束后立即作废，允许用户再次尝试。
   const idempotencyKey = useRef<string | null>(null);
   const isArk = provider !== "runway";
+  const { jobs, setJobs, refreshing, fetchError, acting, refreshJobs, act } = useVideoJobs();
+  const { visible, hidden } = useMemo(() => visibleJobs(jobs), [jobs]);
 
-  const refreshJobs = useCallback(async () => {
-    const response = await fetch("/api/video-jobs", { cache: "no-store" });
-    if (!response.ok) return;
-    const data = (await response.json()) as { jobs: VideoJob[] };
-    setJobs(data.jobs);
-  }, []);
+  // 任务入库超过 4 分钟仍没有上游 task id：提示用户可以恢复，但不能自动判定失败。
+  useEffect(() => {
+    const timer = window.setInterval(() => setJobs((current) => markRecoverable(current)), 30000);
+    return () => window.clearInterval(timer);
+  }, [setJobs]);
 
-  /** 手动刷新：之前点击完全没有反馈，失败也不说话。 */
   async function refreshManually() {
     if (refreshing) return;
-    setRefreshing(true);
-    try {
-      await refreshJobs();
-      toast.success("视频任务已刷新");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "刷新失败，请稍后重试");
-    } finally {
-      setRefreshing(false);
-    }
+    await refreshJobs();
+    if (!fetchError) toast.success("视频任务已刷新");
   }
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void refreshJobs(), 0);
-    return () => window.clearTimeout(timer);
-  }, [refreshJobs]);
-
-  useEffect(() => {
-    if (!jobs.some((job) => job.status === "queued" || job.status === "generating")) return;
-    // 服务端按 5/10/15/20-30 秒的节奏决定是否真正查询方舟，这里的定时只负责刷新页面状态。
-    const timer = window.setInterval(() => void refreshJobs(), 8000);
-    return () => window.clearInterval(timer);
-  }, [jobs, refreshJobs]);
 
   async function uploadFiles(files: FileList | null, slot?: number) {
     if (!files?.length) return;
@@ -174,44 +154,54 @@ export function VideoStudio({
             ? { kind: mode, inputPaths, productInfo, concept, duration, orientation, resolution, productCategory, generateAudio, idempotencyKey: idempotencyKey.current }
             : { kind: mode, inputPaths, productInfo, script: concept, duration, orientation: "portrait", productCategory, generateAudio, idempotencyKey: idempotencyKey.current };
       const response = await fetch("/api/video-jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = (await response.json()) as { job?: VideoJob; error?: string };
+      const data = await response.json().catch(() => ({})) as { job?: VideoJob; error?: string };
       if (!response.ok || !data.job) throw new Error(data.error ?? "任务创建失败");
+      // 服务端已经明确接受了这次提交，无论结果成功还是失败，令牌都不该再复用。
       idempotencyKey.current = null;
       setJobs((current) => [data.job!, ...current.filter((job) => job.id !== data.job!.id)]);
-      if (data.job.status === "failed") toast.error(data.job.error_message ?? "任务创建失败");
-      else toast.success("视频任务已创建，需要一定时间，可离开页面后再回来查看");
+      if (data.job.status === "failed") {
+        if (isUndeterminedCreateFailure(data.job.error_message ?? "")) setRecovering(data.job.id);
+        else toast.error(data.job.error_message ?? "任务创建失败");
+      } else {
+        toast.success("视频任务已创建，需要一定时间，可离开页面后再回来查看");
+      }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "任务创建失败");
+      // 请求没到服务端或响应丢失：保留令牌，用户点「重试」会命中同一条记录，
+      // 不会因为一次网络抖动就产生第二个付费任务。
+      toast.error(error instanceof Error ? error.message : "任务创建失败，请检查网络后重试");
     } finally {
       setCreating(false);
     }
   }
 
-  async function action(job: VideoJob, name: "regenerate" | "save") {
+  async function regenerate(job: VideoJob) {
     if (acting) return;
-    if (name === "regenerate" && !window.confirm("重新生成会创建一个新的付费视频任务并再次消耗额度，确认继续？")) return;
-    setActing(`${job.id}:${name}`);
-    try {
-      const response = await fetch(`/api/video-jobs/${job.id}/${name}`, {
-        method: "POST",
-        ...(name === "regenerate"
-          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) }
-          : {}),
-      });
-      const data = (await response.json()) as { job?: VideoJob; error?: string };
-      if (!response.ok) {
-        toast.error(data.error ?? "操作失败");
-        return;
-      }
-      // 之前 try/finally 没有 catch：网络错误或 JSON 解析失败会变成未捕获的
-      // rejection，用户既看不到错误也没有任何提示。
-      toast.success(name === "save" ? "已保存到作品库" : "已创建重新生成任务");
-      await refreshJobs();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "操作失败，请稍后重试");
-    } finally {
-      setActing(null);
-    }
+    if (!window.confirm("重新生成会创建一个新的付费视频任务并再次消耗额度，确认继续？")) return;
+    // 每次点击一个新令牌，用于并发双击时回落到同一条记录。
+    await act(job, "regenerate", { idempotencyKey: crypto.randomUUID() });
+  }
+
+  async function recover(job: VideoJob) {
+    // 允许留空：留空时服务端会用本地任务 ID 做一次自动反查。
+    const ok = await act(job, "recover", { externalTaskId: recoverTaskId.trim() });
+    if (ok) { setRecovering(null); setRecoverTaskId(""); }
+  }
+
+  async function discard(job: VideoJob) {
+    if (!window.confirm("确认这条任务在生成服务里不存在？确认后会关闭该记录。")) return;
+    await act(job, "discard");
+  }
+
+  function cancelRecover(job: VideoJob) {
+    void act(job, "discard", { confirm: false });
+    setRecovering(null);
+  }
+
+  function copyTaskId(jobId: string) {
+    void navigator.clipboard?.writeText(jobId).then(
+      () => toast.success("任务 ID 已复制，可在生成服务控制台按此 ID 查询"),
+      () => toast.error("复制失败，请手动选择文本"),
+    );
   }
 
   const uploadLabel =
@@ -444,55 +434,123 @@ export function VideoStudio({
               {refreshing ? "刷新中…" : "刷新"}
             </Button>
           </div>
+
+          {fetchError ? (
+            <Alert>
+              <AlertTitle>任务列表刷新失败</AlertTitle>
+              <AlertDescription>{`${fetchError} 任务仍在服务端继续生成，恢复网络后点「刷新」即可。`}</AlertDescription>
+            </Alert>
+          ) : null}
+
           {jobs.length ? (
-            jobs.map((job) => (
-              <Card key={job.id}>
-                <CardContent className="pt-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex gap-2">
-                      <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
-                        {job.status === "generating" ? <Loader2 className="animate-spin" /> : null}
-                        {statusLabels[job.status]}
-                      </Badge>
-                      {job.saved ? <Badge variant="outline">已存作品库</Badge> : null}
-                    </span>
-                    <span className="text-xs text-muted-foreground">{new Date(job.created_at).toLocaleString("zh-CN")}</span>
-                  </div>
-                  {job.status === "queued" || job.status === "generating" ? (
-                    <div className="mt-4">
-                      <div className="h-2 overflow-hidden rounded-full bg-muted">
-                        <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.max(3, job.progress)}%` }} />
-                      </div>
-                      <p className="mt-2 text-xs text-muted-foreground">{`进度 ${job.progress}% · 页面会自动轮询`}</p>
+            <>
+              {visible.map((job) => (
+                <Card key={job.id}>
+                  <CardContent className="pt-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex gap-2">
+                        <Badge variant={job.status === "failed" ? "destructive" : "secondary"}>
+                          {job.status === "generating" ? <Loader2 className="animate-spin" /> : null}
+                          {jobStatusLabel(job.status)}
+                        </Badge>
+                        {job.saved ? <Badge variant="outline">已存作品库</Badge> : null}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{new Date(job.created_at).toLocaleString("zh-CN")}</span>
                     </div>
-                  ) : null}
-                  {job.status === "failed" ? (
-                    <p className="mt-3 text-sm text-destructive">{job.error_message ?? "视频生成失败，请重试"}</p>
-                  ) : null}
-                  {job.status === "completed" && job.output_url ? (
-                    <video className="mt-4 aspect-video w-full rounded-md bg-black" src={job.output_url} controls playsInline />
-                  ) : null}
-                  <div className="mt-4 flex gap-2">
-                    <Button size="sm" variant="outline" disabled={acting !== null} onClick={() => void action(job, "regenerate")}>
-                      {acting === `${job.id}:regenerate` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                      {acting === `${job.id}:regenerate` ? "处理中…" : "重新生成"}
-                    </Button>
-                    {job.status === "completed" && !job.saved ? (
-                      <Button size="sm" disabled={acting !== null} onClick={() => void action(job, "save")}>
-                        {acting === `${job.id}:save` ? <Loader2 className="animate-spin" /> : <Save />}
-                        {acting === `${job.id}:save` ? "保存中…" : "保存到作品库"}
-                      </Button>
+                    {job.status === "queued" || job.status === "generating" ? (
+                      <div className="mt-4">
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.max(3, job.progress)}%` }} />
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">{`进度 ${job.progress}% · 页面会自动轮询`}</p>
+                      </div>
                     ) : null}
-                  </div>
-                </CardContent>
-              </Card>
-            ))
+                    {job.status === "failed" ? (
+                      <p className="mt-3 text-sm text-destructive">{job.error_message ?? "视频生成失败，请重试"}</p>
+                    ) : null}
+                    {job.status === "never_accepted" ? (
+                      <p className="mt-3 text-sm text-muted-foreground">{job.error_message ?? "该记录已关闭。"}</p>
+                    ) : null}
+                    {job.status === "completed" && job.output_url ? (
+                      <video className="mt-4 aspect-video w-full rounded-md bg-black" src={job.output_url} controls playsInline />
+                    ) : null}
+
+                    {job.recover && !recovering ? (
+                      <Alert variant="destructive" className="mt-3">
+                        <AlertTriangle />
+                        <AlertTitle>这条任务还没有关联到生成服务</AlertTitle>
+                        <AlertDescription>
+                          <p>提交过程被中断，无法判断生成服务里是否已经存在该任务。请先在生成服务控制台按下面的任务 ID 查询，再决定如何继续。</p>
+                          <button type="button" className="my-2 font-mono text-xs underline" onClick={() => copyTaskId(job.id)}>
+                            {job.id}（点击复制）
+                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" disabled={acting !== null} onClick={() => { setRecovering(job.id); setRecoverTaskId(""); }}>
+                              在生成服务里找到了任务
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={acting !== null} onClick={() => void discard(job)}>没有这个任务，关闭记录</Button>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
+                    {recovering === job.id ? (
+                      <div className="mt-3 space-y-2 rounded-md border p-3">
+                        <p className="text-sm font-medium">恢复任务</p>
+                        <p className="text-xs text-muted-foreground">
+                          可留空——留空时会先用下面这个任务 ID 自动反查；查不到再填生成服务控制台里的任务 ID（形如 cgt-...）。恢复只会补记并继续查询，不会再次创建任务或再次扣费。
+                        </p>
+                        <Input
+                          value={recoverTaskId}
+                          onChange={(event) => setRecoverTaskId(event.target.value)}
+                          placeholder="留空则自动反查，或填写 cgt-..."
+                          autoComplete="off"
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" disabled={acting !== null} onClick={() => void recover(job)}>
+                            {acting === `${job.id}:recover` ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+                            {acting === `${job.id}:recover` ? "恢复中…" : "确认恢复"}
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => cancelRecover(job)}>
+                            <X />
+                            取消
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" disabled={acting !== null} onClick={() => void regenerate(job)}>
+                        {acting === `${job.id}:regenerate` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                        {acting === `${job.id}:regenerate` ? "处理中…" : "重新生成"}
+                      </Button>
+                      {job.status === "completed" && !job.saved ? (
+                        <Button size="sm" disabled={acting !== null} onClick={() => void act(job, "save")}>
+                          {acting === `${job.id}:save` ? <Loader2 className="animate-spin" /> : <Save />}
+                          {acting === `${job.id}:save` ? "保存中…" : "保存到作品库"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+              {hidden > 0 && !showAll ? (
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAll(true)}>
+                  {`展开更早的 ${hidden} 条任务`}
+                </Button>
+              ) : null}
+              {showAll && hidden > 0 ? (
+                <Button variant="ghost" size="sm" className="w-full" onClick={() => setShowAll(false)}>
+                  收起更早的任务
+                </Button>
+              ) : null}
+            </>
           ) : (
             <Card className="border-dashed">
               <CardContent className="flex min-h-44 flex-col items-center justify-center text-center">
                 <Upload className="size-7 text-muted-foreground" />
                 <p className="mt-3 text-sm font-medium">暂无视频任务</p>
-                <p className="mt-1 text-xs text-muted-foreground">创建后会立即显示 task id 对应状态</p>
+                <p className="mt-1 text-xs text-muted-foreground">创建后会立即显示任务状态</p>
               </CardContent>
             </Card>
           )}

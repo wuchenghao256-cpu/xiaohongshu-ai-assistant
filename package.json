@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --no-warnings --experimental-strip-types --test src/lib/jobs/orchestrator.test.ts src/lib/video/seedance.test.ts src/lib/image-ai/round.test.ts"
+    "test": "node --no-warnings --experimental-strip-types --test src/lib/jobs/orchestrator.test.ts src/lib/video/seedance.test.ts src/lib/video/stability.test.ts src/lib/image-ai/round.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

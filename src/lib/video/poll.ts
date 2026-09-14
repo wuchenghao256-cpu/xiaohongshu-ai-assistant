@@ -1,5 +1,7 @@
 import "server-only";
 import type { ProviderRuntimeConfig } from "@/lib/providers/types";
+import { categorizePollError } from "@/lib/video/error-category";
+import { logVideoEvent } from "@/lib/video/log";
 import { hasPollingTimedOut } from "@/lib/video/poll-schedule";
 import { getProviderTask, nextProgress, type NormalizedTask } from "@/lib/video/provider";
 
@@ -32,6 +34,9 @@ export type JobChanges = {
 /**
  * 查询一个未完成的视频任务并返回需要写回的字段。
  * 这里只负责状态收敛；页面刷新后仍会走同一路径，因此刷新不会丢任务。
+ *
+ * 只会 GET，从不创建。查询失败只记录并保持当前状态，交给下一轮继续查询，
+ * 绝不会因为一次查询失败而重新创建付费任务。
  */
 export async function pollVideoJob(config: ProviderRuntimeConfig, job: PollableJob): Promise<JobChanges | null> {
   const base = {
@@ -43,7 +48,11 @@ export async function pollVideoJob(config: ProviderRuntimeConfig, job: PollableJ
   };
   if (!job.external_task_id) return null;
 
+  const startedAt = Date.now();
+  logVideoEvent("poll.start", { jobId: job.id, provider: job.provider, upstreamTaskId: job.external_task_id, pollCount: job.poll_attempts + 1 });
+
   if (hasPollingTimedOut(job.submitted_at)) {
+    logVideoEvent("poll.timed_out", { jobId: job.id, provider: job.provider, upstreamTaskId: job.external_task_id, pollCount: job.poll_attempts + 1, durationMs: Date.now() - startedAt });
     return { ...base, status: "failed", progress: job.progress, error_message: "视频生成超时，请重新生成。" };
   }
 
@@ -51,16 +60,20 @@ export async function pollVideoJob(config: ProviderRuntimeConfig, job: PollableJ
   try {
     remote = await getProviderTask(config, job.external_task_id, job.progress);
   } catch (error) {
-    // 单次查询失败不判定任务失败，交给下一轮轮询继续尝试；只记录错误码，不记录响应原文。
-    console.error("Video task poll failed", { jobId: job.id, code: error instanceof Error ? error.name : "unknown" });
+    // 单次查询失败不判定任务失败，交给下一轮轮询继续尝试；只记录错误分类，不记录响应原文。
+    const category = categorizePollError(error);
+    logVideoEvent("poll.failed", { jobId: job.id, provider: job.provider, upstreamTaskId: job.external_task_id, category, pollCount: job.poll_attempts + 1, durationMs: Date.now() - startedAt });
     return base;
   }
 
   const progress = nextProgress(job.progress, remote);
+  const trace = { jobId: job.id, provider: job.provider, upstreamTaskId: job.external_task_id, providerStatus: remote.providerStatus, pollCount: job.poll_attempts + 1, durationMs: Date.now() - startedAt };
   if (remote.status === "completed") {
     if (!remote.outputUrl) {
+      logVideoEvent("poll.ok", { ...trace, status: "failed" });
       return { ...base, status: "failed", progress: 100, error_message: "视频生成完成但没有返回可用地址，请重试。" };
     }
+    logVideoEvent("poll.ok", { ...trace, status: "completed" });
     return {
       ...base,
       status: "completed",
@@ -73,7 +86,9 @@ export async function pollVideoJob(config: ProviderRuntimeConfig, job: PollableJ
     };
   }
   if (remote.status === "failed") {
+    logVideoEvent("poll.ok", { ...trace, status: "failed" });
     return { ...base, status: "failed", progress, provider_status: remote.providerStatus, error_message: remote.errorMessage ?? "视频生成失败，请重试。" };
   }
+  logVideoEvent("poll.ok", { ...trace, status: remote.status });
   return { ...base, status: remote.status, progress, provider_status: remote.providerStatus, provider_meta: remote.meta };
 }

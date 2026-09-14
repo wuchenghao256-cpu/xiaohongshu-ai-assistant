@@ -67,3 +67,24 @@ export function withoutIdempotencyKey(input: VideoJobInput): VideoJobInput {
   delete rest.idempotencyKey;
   return rest as VideoJobInput;
 }
+
+/** 数据库 media_job_status 枚举之外，只在“提交确定失败”时使用的中间状态。 */
+export type VideoJobStatus = "queued" | "generating" | "completed" | "failed" | "never_accepted";
+
+/**
+ * 提交阶段客户端可能看到的全部状态。`preparing` 只是前端文案，
+ * 不会写入数据库：它表示请求已发出但服务端还没返回结果。
+ */
+export const videoJobStatusLabels: Record<VideoJobStatus | "preparing", string> = {
+  preparing: "准备中",
+  queued: "排队中",
+  generating: "生成中",
+  completed: "完成",
+  failed: "失败",
+  never_accepted: "未提交",
+};
+
+/** 只有这两个状态表示「上游可能已经在生成并计费」，必须续接轮询而不是重新创建。 */
+export function isJobActive(status: string) {
+  return status === "queued" || status === "generating";
+}
