@@ -5,12 +5,14 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
+  KeyRound,
   Loader2,
   PlugZap,
   Save,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,6 +87,15 @@ const providers: Array<{
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     models: ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128"],
   },
+  {
+    id: "alibaba",
+    name: "阿里云 Wan",
+    description: "阿里云百炼 Wan2.7 图生视频（首帧）。密钥只从服务端环境变量读取",
+    // 华北2（北京）的 Endpoint 是业务空间专属域名，由下面的业务空间 ID 决定；
+    // 这里留空表示「按业务空间 ID 生成」，而不是写死一个通用地址。
+    baseUrl: "",
+    models: ["wan2.7-i2v-2026-04-25"],
+  },
 ];
 
 type Draft = {
@@ -93,15 +104,22 @@ type Draft = {
   modelPreset: string;
   customModel: string;
   qualityModel: string;
+  workspaceId: string;
+  region: string;
   enabled: boolean;
 };
+
+/** 阿里云百炼的密钥来自服务端环境变量，设置页永远不收集、也不回显它。 */
+const isDashscope = (provider: ProviderName) => provider === "alibaba";
 
 export function ProviderSettings({
   initialConfigs,
   arkKeyReusable = false,
+  dashscopeKeyConfigured = false,
 }: {
   initialConfigs: SafeProviderConfig[];
   arkKeyReusable?: boolean;
+  dashscopeKeyConfigured?: boolean;
 }) {
   const [category, setCategory] = useState<ProviderCategory>("image");
   const [configs, setConfigs] = useState(initialConfigs);
@@ -130,6 +148,8 @@ export function ProviderSettings({
         ? existing.model
         : "",
     qualityModel: existing?.qualityModel ?? (open === "volcengine" ? "doubao-seedance-2-0-260128" : "gen4.5"),
+    workspaceId: existing?.workspaceId ?? "",
+    region: existing?.region ?? "cn-beijing",
     enabled: existing?.enabled ?? false,
   };
   const update = (partial: Partial<Draft>) =>
@@ -137,9 +157,20 @@ export function ProviderSettings({
   const model = draft.customModel.trim() || draft.modelPreset;
   /** 火山方舟的图片与视频共用同一把 Key：已为 Seedream 配置过就不必再次填写。 */
   const reusesArkKey = open === "volcengine" && !draft.apiKey.trim() && arkKeyReusable;
+  /** 百炼的密钥由服务端环境变量提供，表单里不需要、也不应该填写。 */
+  const usesEnvKey = isDashscope(open);
 
   async function submit(action: "save" | "test") {
-    if (!draft.baseUrl || !model || (!draft.apiKey && !existing && !reusesArkKey)) {
+    // 百炼不校验 API Key 输入框：它的密钥在服务端，这里只需业务空间 ID。
+    if (usesEnvKey && !draft.workspaceId.trim()) {
+      toast.error("请填写百炼业务空间 ID");
+      return;
+    }
+    if (!draft.baseUrl.trim() && !usesEnvKey) {
+      toast.error("请填写 API Base URL");
+      return;
+    }
+    if (!model || (!usesEnvKey && !draft.apiKey && !existing && !reusesArkKey)) {
       toast.error("请完整填写接口地址、模型和 API Key");
       return;
     }
@@ -155,10 +186,14 @@ export function ProviderSettings({
           body: JSON.stringify({
             category,
             provider: open,
-            baseUrl: draft.baseUrl,
+            // 百炼的 Base URL 永远由服务端按业务空间 ID 推导。不回传旧值，
+            // 否则改了业务空间 ID 也会被上一次保存的域名覆盖。
+            baseUrl: usesEnvKey ? undefined : draft.baseUrl,
             apiKey: draft.apiKey || undefined,
             model,
             qualityModel: category === "video" ? draft.qualityModel : undefined,
+            workspaceId: usesEnvKey ? draft.workspaceId.trim() : undefined,
+            region: usesEnvKey ? draft.region : undefined,
             enabled: draft.enabled,
           }),
         },
@@ -226,9 +261,9 @@ export function ProviderSettings({
               .filter(
                 (item) =>
                   category === "video"
-                    ? item.id === "volcengine" || item.id === "runway"
+                    ? item.id === "volcengine" || item.id === "runway" || item.id === "alibaba"
                     : category === "image"
-                      ? item.id !== "runway"
+                      ? item.id !== "runway" && item.id !== "alibaba"
                       : item.id === "openai" || item.id === "custom",
               )
               .map((item) => {
@@ -296,48 +331,91 @@ export function ProviderSettings({
               </Badge>
             </div>
             <div className="grid min-w-0 gap-5">
-              <Field>
-                <FieldLabel htmlFor="provider-base-url">
-                  API Base URL
-                </FieldLabel>
-                <Input
-                  id="provider-base-url"
-                  value={draft.baseUrl}
-                  onChange={(event) => update({ baseUrl: event.target.value })}
-                  placeholder="https://api.example.com/v1"
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="provider-key">API Key</FieldLabel>
-                <div className="relative">
+              {usesEnvKey ? (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor="provider-workspace-id">业务空间 ID</FieldLabel>
+                    <Input
+                      id="provider-workspace-id"
+                      value={draft.workspaceId}
+                      onChange={(event) => update({ workspaceId: event.target.value })}
+                      placeholder="例如 my-workspace"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      华北2（北京）的 Endpoint 是按业务空间划分的专属域名：
+                      {" "}
+                      <span className="font-mono">{`https://${draft.workspaceId.trim() || "{WorkspaceId}"}.cn-beijing.maas.aliyuncs.com`}</span>
+                      。请填写百炼控制台里的业务空间 ID。
+                    </p>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="provider-region">地域</FieldLabel>
+                    <Select value={draft.region} onValueChange={(value) => value && update({ region: value })}>
+                      <SelectTrigger id="provider-region" className="w-full">
+                        <SelectValue>{draft.region}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cn-beijing">cn-beijing（华北2 北京）</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Alert>
+                    <KeyRound />
+                    <AlertTitle>API Key 由服务端环境变量提供</AlertTitle>
+                    <AlertDescription>
+                      {dashscopeKeyConfigured
+                        ? "已在服务端检测到 DASHSCOPE_API_KEY。这里的表单不会读取、保存或回显密钥，它只保存业务空间 ID。"
+                        : "尚未在服务端检测到 DASHSCOPE_API_KEY。请先在部署环境配置该变量（连同 DASHSCOPE_WORKSPACE_ID、DASHSCOPE_REGION），再回到这里保存并启用。密钥只存在于服务端，不会下发到浏览器。"}
+                    </AlertDescription>
+                  </Alert>
+                </>
+              ) : (
+                <Field>
+                  <FieldLabel htmlFor="provider-base-url">
+                    API Base URL
+                  </FieldLabel>
                   <Input
-                    id="provider-key"
-                    type={visible ? "text" : "password"}
-                    value={draft.apiKey}
-                    onChange={(event) => update({ apiKey: event.target.value })}
-                    placeholder={existing?.hasApiKey ? "已安全保存；留空保持不变" : reusesArkKey ? "已复用 Seedream 的 Ark API Key；留空即可" : "输入 API Key"}
-                    autoComplete="new-password"
-                    className="pr-11"
+                    id="provider-base-url"
+                    value={draft.baseUrl}
+                    onChange={(event) => update({ baseUrl: event.target.value })}
+                    placeholder="https://api.example.com/v1"
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="absolute right-1 top-1/2 -translate-y-1/2"
-                    onClick={() => setVisible((value) => !value)}
-                    aria-label={visible ? "隐藏 API Key" : "显示 API Key"}
-                  >
-                    {visible ? <EyeOff /> : <Eye />}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {existing
-                    ? "API Key 已在服务端加密保存。留空将保留原密钥，页面和接口响应不会返回任何密钥片段。"
-                    : reusesArkKey
-                      ? "无需重复填写：将自动复用已保存的 Seedream 火山方舟 API Key。"
-                      : "使用 AES-256-GCM 加密后保存。"}
-                </p>
-              </Field>
+                </Field>
+              )}
+              {usesEnvKey ? null : (
+                <Field>
+                  <FieldLabel htmlFor="provider-key">API Key</FieldLabel>
+                  <div className="relative">
+                    <Input
+                      id="provider-key"
+                      type={visible ? "text" : "password"}
+                      value={draft.apiKey}
+                      onChange={(event) => update({ apiKey: event.target.value })}
+                      placeholder={existing?.hasApiKey ? "已安全保存；留空保持不变" : reusesArkKey ? "已复用 Seedream 的 Ark API Key；留空即可" : "输入 API Key"}
+                      autoComplete="new-password"
+                      className="pr-11"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="absolute right-1 top-1/2 -translate-y-1/2"
+                      onClick={() => setVisible((value) => !value)}
+                      aria-label={visible ? "隐藏 API Key" : "显示 API Key"}
+                    >
+                      {visible ? <EyeOff /> : <Eye />}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {existing
+                      ? "API Key 已在服务端加密保存。留空将保留原密钥，页面和接口响应不会返回任何密钥片段。"
+                      : reusesArkKey
+                        ? "无需重复填写：将自动复用已保存的 Seedream 火山方舟 API Key。"
+                        : "使用 AES-256-GCM 加密后保存。"}
+                  </p>
+                </Field>
+              )}
               {provider.models.length ? (
                 <Field>
                   <FieldLabel htmlFor="provider-preset">
@@ -398,7 +476,9 @@ export function ProviderSettings({
                   <p className="text-xs text-muted-foreground">
                     {open === "volcengine"
                       ? "豆包 Seedance 2.0 由火山方舟提供，与 Seedream 图片共用同一把 Ark API Key。"
-                      : "模型列表为可扩展配置，后续可加入 Veo、Seedance、Hailuo。"}
+                      : open === "alibaba"
+                        ? "Wan2.7 图生视频本轮只实现首帧生视频：固定 5 秒、720P、不加水印。模型 ID 为 wan2.7-i2v-2026-04-25。"
+                        : "模型列表为可扩展配置，后续可加入 Veo、Seedance、Hailuo。"}
                   </p>
                 </Field>
               ) : null}

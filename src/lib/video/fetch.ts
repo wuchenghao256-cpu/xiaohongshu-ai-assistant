@@ -15,3 +15,21 @@ export async function fetchWithTimeout(input: RequestInfo | URL, init: RequestIn
     clearTimeout(timer);
   }
 }
+
+/**
+ * 把 Storage 里的私有素材交给第三方 Provider（如阿里云百炼）时，需要一个公网可访问
+ * 的直链。bucket 是私有的，签名地址才是唯一的可读入口；这里验一次可达性，避免把
+ * 注定取不到的地址当成首帧图提交出去 —— 那样只会在几十秒后拿到一个模糊的失败。
+ */
+export async function verifyPublicImageUrl(url: string, timeoutMs = 15_000) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    const response = await fetchWithTimeout(url, { method: "HEAD", cache: "no-store" }, timeoutMs);
+    if (!response.ok) return false;
+    const type = response.headers.get("content-type") ?? "";
+    return type === "" || type.startsWith("image/");
+  } catch {
+    return false;
+  }
+}

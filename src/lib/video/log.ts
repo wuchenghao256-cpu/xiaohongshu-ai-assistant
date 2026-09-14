@@ -43,6 +43,8 @@ export type VideoLogFields = {
   code?: string;
   /** 是否由用户显式点击「重新生成」触发；只有这种创建才允许产生新的付费任务。 */
   explicit?: boolean;
+  /** 保存是轮询自动触发还是用户手动点击。转存失败时区分这两条路径便于排查。 */
+  auto?: boolean;
 };
 
 export function logVideoEvent(stage: VideoLogStage, fields: Omit<VideoLogFields, "stage">) {

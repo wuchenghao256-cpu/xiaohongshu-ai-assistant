@@ -1,9 +1,11 @@
 import { jsonError } from "@/lib/http";
-import { getEnabledProviderConfig } from "@/lib/providers/repository";
+import { getVideoProviderConfig } from "@/lib/providers/repository";
 import { requireUser } from "@/lib/supabase/auth";
 import { categorizePollError } from "@/lib/video/error-category";
 import { logVideoEvent } from "@/lib/video/log";
 import { getProviderTask } from "@/lib/video/provider";
+import { resolvePlaybackUrl } from "@/lib/video/playback";
+import { autoPersistAndSign, findVideoAsset, signVideoAsset } from "@/lib/video/persist";
 
 const JOB_COLUMNS = "id,kind,status,progress,provider,external_task_id,input_snapshot,output_url,error_message,provider_status,provider_meta,submitted_at,last_polled_at,poll_attempts,created_at,updated_at,completed_at";
 
@@ -29,7 +31,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const body = await request.json().catch(() => ({})) as { externalTaskId?: unknown };
     const manual = typeof body.externalTaskId === "string" ? body.externalTaskId.trim() : "";
     if (manual && (manual.length < 3 || manual.length > 200)) {
-      return Response.json({ error: "请填写正确的任务 ID（形如 cgt-...）。" }, { status: 400 });
+      // 百炼的任务 ID 是 UUID，方舟的是 cgt-...，两种形状都接受。
+      return Response.json({ error: "请填写正确的任务 ID（形如 cgt-... 或 UUID）。" }, { status: 400 });
     }
 
     const { user, supabase } = await requireUser();
@@ -42,7 +45,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return Response.json({ error: "只有提交失败或仍在排队的任务可以恢复。" }, { status: 400 });
     }
 
-    const config = await getEnabledProviderConfig(user.id, "video");
+    const config = await getVideoProviderConfig(user.id);
     if (!config) return Response.json({ error: "请先在系统设置 → 视频模型中启用视频 Provider。" }, { status: 400 });
 
     // 手动填写的 ID 优先；否则用本地 job id 做一次乐观反查（仅当它看起来像上游 ID）。
@@ -93,9 +96,26 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     logVideoEvent("recover.adopted", { jobId: id, provider: current.data.provider, upstreamTaskId, status: changes.status, explicit: Boolean(manual), durationMs: Date.now() - startedAt });
-    const saved = await supabase.from("video_assets").select("id").eq("video_job_id", id).maybeSingle();
+    // 恢复出来的任务可能早就生成完成（例如本地响应丢失后隔天才恢复）。这里顺手
+    // 把视频转存到 Storage 并签出播放地址，用户点完「恢复」就能直接看到画面，
+    // 而不是只能看到一个很快过期的临时地址。转存失败不影响恢复结果。
+    const existing = await findVideoAsset(supabase, id);
+    const persisted = changes.status === "completed" && changes.output_url
+      ? await autoPersistAndSign(supabase, user.id, id, existing)
+      : { saved: Boolean(existing), signedUrl: existing ? await signVideoAsset(supabase, existing) : null };
     // 把服务端权威状态原样返回给前端覆盖本地：如果这个任务其实已经结束，
     // 前端必须立刻停止轮询，而不是继续每 8 秒请求一次。
-    return Response.json({ job: { ...updated.data, saved: Boolean(saved.data), recover: false } });
+    return Response.json({
+      job: {
+        ...updated.data,
+        saved: persisted.saved,
+        // 与列表接口同一规则：已入库只用签名地址（签名失败就不给地址，
+        // 避免退回临时地址后永远卡在一个播不了的黑洞）；未入库才回落到临时地址。
+        playback_url: persisted.saved
+          ? (persisted.signedUrl ?? null)
+          : resolvePlaybackUrl(null, updated.data.output_url),
+        recover: false,
+      },
+    });
   } catch (error) { return jsonError(error); }
 }

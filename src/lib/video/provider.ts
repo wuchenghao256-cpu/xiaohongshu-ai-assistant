@@ -5,14 +5,20 @@ import { getRunwayTask, createRunwayTask } from "@/lib/video/runway";
 import { createSeedanceTask, getSeedanceTask, type SeedanceStatus } from "@/lib/video/seedance";
 import type { VideoJobInput } from "@/lib/video/types";
 import { buildVideoPrompt } from "@/lib/video/prompts";
+import { createWanTask, getWanTask, type WanStatus } from "@/lib/video/wan";
 
 export { toUserMessage };
 
 export const VOLCENGINE_MODEL = "doubao-seedance-2-0-260128";
 export const RUNWAY_DEFAULT_MODEL = "gen4_turbo";
+export const ALIBABA_WAN_MODEL = "wan2.7-i2v-2026-04-25";
 
 export type NormalizedTask = {
-  status: "queued" | "generating" | "completed" | "failed";
+  /**
+   * `unknown` 表示 Provider 明确返回了「状态不可知」（百炼任务不存在或超出 24 小时查询窗口）。
+   * 它既不是完成也不是失败，轮询链路必须原样透传，不能替用户判定任务已经结束。
+   */
+  status: "queued" | "generating" | "completed" | "failed" | "unknown";
   progress: number;
   providerStatus?: string;
   outputUrl?: string;
@@ -25,7 +31,16 @@ export function isArkProvider(config: ProviderRuntimeConfig) {
   return config.provider === "volcengine";
 }
 
+/** 阿里云百炼走 Wan2.7 新版异步图生视频协议。 */
+export function isWanProvider(config: ProviderRuntimeConfig) {
+  return config.provider === "alibaba";
+}
+
 export async function createProviderTask(config: ProviderRuntimeConfig, input: VideoJobInput, urls: string[]) {
+  if (isWanProvider(config)) {
+    // 复用现有视频 Prompt 与商品保真约束，不另起一套。
+    return createWanTask(config, input, buildVideoPrompt(input), urls);
+  }
   if (isArkProvider(config)) {
     const prompt = buildVideoPrompt(input);
     return createSeedanceTask(config, input, prompt, urls);
@@ -34,6 +49,17 @@ export async function createProviderTask(config: ProviderRuntimeConfig, input: V
 }
 
 export async function getProviderTask(config: ProviderRuntimeConfig, externalTaskId: string, currentProgress: number): Promise<NormalizedTask> {
+  if (isWanProvider(config)) {
+    const task = await getWanTask(config, externalTaskId, currentProgress);
+    return {
+      status: task.status,
+      progress: task.progress,
+      providerStatus: task.providerStatus,
+      outputUrl: task.videoUrl,
+      errorMessage: task.errorMessage,
+      meta: task.meta,
+    };
+  }
   if (isArkProvider(config)) {
     const task = await getSeedanceTask(config, externalTaskId, currentProgress);
     return {
@@ -69,4 +95,4 @@ export function nextProgress(current: number, task: NormalizedTask) {
   return Math.max(current, task.progress);
 }
 
-export type { SeedanceStatus };
+export type { SeedanceStatus, WanStatus };

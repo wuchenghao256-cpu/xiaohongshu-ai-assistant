@@ -20,7 +20,12 @@ export type PollableJob = {
 };
 
 export type JobChanges = {
-  status: "queued" | "generating" | "completed" | "failed";
+  /**
+   * 写回数据库的状态。Provider 明确返回「状态不可知」（百炼的 UNKNOWN）时不写 status：
+   * 数据库的 media_job_status 枚举没有这一项，而把未知状态硬塞成 completed/failed
+   * 会让一个可能仍在计费的任务被当成终态，从此不再轮询。
+   */
+  status?: "queued" | "generating" | "completed" | "failed";
   progress: number;
   provider_status?: string;
   provider_meta?: Record<string, string | number>;
@@ -46,6 +51,7 @@ export async function pollVideoJob(config: ProviderRuntimeConfig, job: PollableJ
     status: job.status as JobChanges["status"],
     progress: job.progress,
   };
+
   if (!job.external_task_id) return null;
 
   const startedAt = Date.now();
@@ -88,6 +94,13 @@ export async function pollVideoJob(config: ProviderRuntimeConfig, job: PollableJ
   if (remote.status === "failed") {
     logVideoEvent("poll.ok", { ...trace, status: "failed" });
     return { ...base, status: "failed", progress, provider_status: remote.providerStatus, error_message: remote.errorMessage ?? "视频生成失败，请重试。" };
+  }
+  // 状态不可知（百炼 UNKNOWN：任务不存在或超出 24 小时查询窗口）。
+  // 保留原状态继续轮询，只把 Provider 的原话记进 provider_status 便于排查。
+  // 45 分钟的总超时仍会兜底收敛，因此不会有任务永远挂着。
+  if (remote.status === "unknown") {
+    logVideoEvent("poll.ok", { ...trace, status: "unknown" });
+    return { ...base, provider_status: remote.providerStatus, provider_meta: remote.meta };
   }
   logVideoEvent("poll.ok", { ...trace, status: remote.status });
   return { ...base, status: remote.status, progress, provider_status: remote.providerStatus, provider_meta: remote.meta };

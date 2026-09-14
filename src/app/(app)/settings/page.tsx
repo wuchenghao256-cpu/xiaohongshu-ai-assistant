@@ -13,6 +13,7 @@ import { ProviderSettings } from "@/components/settings/provider-settings";
 import {
   getAiConfigStatus,
   getSupabasePublicEnv,
+  hasDashscopeApiKey,
   hasProviderEncryptionKey,
 } from "@/lib/env";
 import { listProviderConfigs, hasReusableArkKey } from "@/lib/providers/repository";
@@ -97,7 +98,11 @@ export default async function SettingsPage() {
             </Card>
           </section>
           {supabaseReady && hasProviderEncryptionKey() ? (
-            <ProviderSettings initialConfigs={providerConfigs} arkKeyReusable={arkKeyReusable} />
+            <ProviderSettings
+              initialConfigs={providerConfigs}
+              arkKeyReusable={arkKeyReusable}
+              dashscopeKeyConfigured={hasDashscopeApiKey()}
+            />
           ) : (
             <Card>
               <CardHeader>

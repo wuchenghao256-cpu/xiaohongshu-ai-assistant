@@ -1,9 +1,10 @@
 import { jsonError } from "@/lib/http";
-import { getEnabledProviderConfig } from "@/lib/providers/repository";
+import { getVideoProviderConfig } from "@/lib/providers/repository";
 import { requireUser } from "@/lib/supabase/auth";
 import { categorizeCreateError, CREATE_TIMEOUT_USER_MESSAGE, CREATE_UNKNOWN_USER_MESSAGE, mayHaveCreatedUpstream, withRecoveryHint } from "@/lib/video/error-category";
+import { verifyPublicImageUrl } from "@/lib/video/fetch";
 import { logVideoEvent } from "@/lib/video/log";
-import { createProviderTask, toUserMessage } from "@/lib/video/provider";
+import { createProviderTask, isWanProvider, toUserMessage } from "@/lib/video/provider";
 import { videoJobInputSchema, withoutIdempotencyKey } from "@/lib/video/types";
 
 /**
@@ -41,8 +42,25 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const source = await supabase.from("video_jobs").select("input_snapshot").eq("id", id).single();
     if (source.error) return Response.json({ error: "原视频任务不存在。" }, { status: 404 });
     const input = videoJobInputSchema.parse(source.data.input_snapshot);
-    const config = await getEnabledProviderConfig(user.id, "video");
+    const config = await getVideoProviderConfig(user.id);
     if (!config) return Response.json({ error: "请先在系统设置 → 视频模型中启用视频 Provider。" }, { status: 400 });
+
+    // 与 POST /api/video-jobs 一致：先把参考图地址解析出来再建行，这样签名失败或
+    // 首帧图取不到时可以确定没有提交给 Provider，用户直接重试即可，不必走恢复流程。
+    let urls: string[];
+    try {
+      urls = await Promise.all(input.inputPaths.map(async (path) => {
+        const signed = await supabase.storage.from("product-assets").createSignedUrl(path, 43200);
+        if (signed.error) throw signed.error;
+        return signed.data.signedUrl;
+      }));
+      const first = urls[0];
+      if (isWanProvider(config) && first && !(await verifyPublicImageUrl(first))) {
+        throw new Error("首帧图地址不可公开访问，请重新上传参考图后再试。");
+      }
+    } catch (error) {
+      return Response.json({ error: toUserMessage(error, "参考图地址无效，请重新上传后再试。") }, { status: 400 });
+    }
 
     const created = await supabase.from("video_jobs").insert({
       user_id: user.id, kind: input.kind, status: "queued", progress: 0, provider: config.provider,
@@ -56,11 +74,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const startedAt = Date.now();
     logVideoEvent("create.start", { jobId: created.data.id, provider: config.provider, kind: input.kind, idempotencyKey, referenceImageCount: input.inputPaths.length, explicit: true });
     try {
-      const urls = await Promise.all(input.inputPaths.map(async (path) => {
-        const signed = await supabase.storage.from("product-assets").createSignedUrl(path, 86400);
-        if (signed.error) throw signed.error;
-        return signed.data.signedUrl;
-      }));
       const externalTaskId = await createProviderTask(config, input, urls);
       const updated = await supabase.from("video_jobs").update({
         status: "generating", progress: 5, external_task_id: externalTaskId, submitted_at: new Date().toISOString(),

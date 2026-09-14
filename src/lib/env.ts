@@ -20,6 +20,25 @@ const imageAiEnvSchema = z.object({
   ),
 });
 
+/**
+ * 阿里云百炼（Model Studio / DashScope）凭据。
+ *
+ * 与其它 Provider 不同，这把 Key 走环境变量而不是设置页：百炼按业务空间的主账号绑定的
+ * 子账号校验密钥，应用用户自己粘贴的 Key 在提交时会因空间权限失败，而且这条路只服务
+ * 一个工作区。模块带 `server-only`，因此这里读到的值不可能进入浏览器 bundle。
+ *
+ * 只有 API Key 是必需的。业务空间 ID 与地域故意放宽为普通字符串：它们是 Endpoint 的
+ * 输入而不是不变量，格式校验交给真正拼接主机名的那一层（resolveWanBaseUrl），
+ * 这样一个格式不对的业务空间 ID 不会连带把 API Key 也判成「未配置」。
+ */
+const dashscopeEnvSchema = z.object({
+  DASHSCOPE_API_KEY: z.string().min(1),
+  DASHSCOPE_WORKSPACE_ID: z.string().trim().min(1).optional(),
+  DASHSCOPE_REGION: z.string().trim().min(1).optional(),
+});
+
+export type DashscopeEnv = z.infer<typeof dashscopeEnvSchema>;
+
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
 
 export function getServerEnv(): ServerEnv {
@@ -70,4 +89,17 @@ export function getImageAiConfigStatus() {
     configured: parsed.success,
     model: parsed.success ? parsed.data.IMAGE_AI_MODEL : "未配置",
   };
+}
+
+/**
+ * 读取百炼凭据。未配置时返回 null 而不是抛错：业务空间 ID 由用户稍后在设置页填写，
+ * 这里只负责提供环境变量里那部分，并让上层决定是「用环境变量」还是「用设置页」。
+ */
+export function getDashscopeEnv(): DashscopeEnv | null {
+  const parsed = dashscopeEnvSchema.safeParse(process.env);
+  return parsed.success ? parsed.data : null;
+}
+
+export function hasDashscopeApiKey() {
+  return Boolean(process.env.DASHSCOPE_API_KEY);
 }

@@ -13,7 +13,7 @@ import {
 
 export type JobAction = "regenerate" | "recover" | "save" | "discard";
 
-type ActionResponse = { job?: VideoJob; asset?: unknown; error?: string };
+type ActionResponse = { job?: VideoJob; asset?: unknown; playbackUrl?: string | null; error?: string };
 
 async function readJson(response: Response): Promise<ActionResponse> {
   return await response.json().catch(() => ({})) as ActionResponse;
@@ -83,6 +83,15 @@ export function useVideoJobs() {
       // 服务端返回的就是权威状态，用它覆盖本地：已结束的任务必须立刻停止轮询。
       if ((name === "regenerate" || name === "recover") && data.job) {
         setJobs((current) => patchJob(current, data.job!, { recover: false }));
+      }
+      // 手动保存成功：把签名地址与 saved 标记写回本地，否则要等下一次轮询
+      // 才会拿到永久播放地址，而临时地址可能已经接近过期。
+      // 以 asset 是否存在判定「已保存」，不能拿 playbackUrl 判定 —— 签名偶尔
+      // 失败不代表没存进去，那时仍然应该显示已保存，只是地址留待下次刷新补齐。
+      if (name === "save" && data.asset) {
+        setJobs((current) => current.map((item) => (item.id === job.id
+          ? { ...item, saved: true, ...(data.playbackUrl ? { playback_url: data.playbackUrl } : {}) }
+          : item)));
       }
       if (name === "discard") {
         // 服务端已确认这条记录不会再被轮询，直接移除；也避免再刷新一次列表。

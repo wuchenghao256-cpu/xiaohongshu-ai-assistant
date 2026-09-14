@@ -1,5 +1,6 @@
 // 相对路径 + 显式扩展名：项目测试脚本直接用 Node 运行，没有 @/ 别名解析。
 import { SeedanceError } from "./seedance-mapping.ts";
+import { WanError } from "./wan-mapping.ts";
 
 /**
  * 创建任务的失败分类。这个分类直接决定「能不能重试」，是防重复扣费的核心：
@@ -18,26 +19,34 @@ export type VideoCreateErrorCategory =
 
 export type VideoPollErrorCategory = "timeout" | "unavailable" | "network" | "server";
 
-const CREATE_TIMEOUT_CODES = new Set(["ARK_TIMEOUT"]);
-const CREATE_UNAVAILABLE_CODES = new Set(["ARK_UNAVAILABLE"]);
-const CREATE_NETWORK_CODES = new Set(["ARK_UNREACHABLE"]);
-const CREATE_RATE_LIMIT_CODES = new Set(["ARK_QUOTA"]);
-const CREATE_AUTH_CODES = new Set(["ARK_UNAUTHORIZED", "ARK_FORBIDDEN", "ARK_PORTRAIT_CONSENT"]);
-const CREATE_REJECTED_CODES = new Set(["ARK_CONTENT_REJECTED", "ARK_INVALID_PARAMETER", "ARK_BAD_REQUEST", "ARK_NOT_ENABLED", "ARK_MODEL_UNAVAILABLE"]);
-const CREATE_INVALID_RESPONSE_CODES = new Set(["ARK_INVALID_RESPONSE"]);
+const CREATE_TIMEOUT_CODES = new Set(["ARK_TIMEOUT", "WAN_TIMEOUT"]);
+const CREATE_UNAVAILABLE_CODES = new Set(["ARK_UNAVAILABLE", "WAN_UNAVAILABLE"]);
+const CREATE_NETWORK_CODES = new Set(["ARK_UNREACHABLE", "WAN_UNREACHABLE"]);
+const CREATE_RATE_LIMIT_CODES = new Set(["ARK_QUOTA", "WAN_QUOTA"]);
+const CREATE_AUTH_CODES = new Set(["ARK_UNAUTHORIZED", "ARK_FORBIDDEN", "ARK_PORTRAIT_CONSENT", "WAN_UNAUTHORIZED", "WAN_WORKSPACE_FORBIDDEN"]);
+const CREATE_REJECTED_CODES = new Set(["ARK_CONTENT_REJECTED", "ARK_INVALID_PARAMETER", "ARK_BAD_REQUEST", "ARK_NOT_ENABLED", "ARK_MODEL_UNAVAILABLE", "WAN_CONTENT_REJECTED", "WAN_INVALID_PARAMETER", "WAN_BAD_REQUEST", "WAN_NOT_ENABLED", "WAN_MODEL_UNAVAILABLE", "WAN_MISSING_FIRST_FRAME", "WAN_INVALID_WORKSPACE"]);
+const CREATE_INVALID_RESPONSE_CODES = new Set(["ARK_INVALID_RESPONSE", "WAN_INVALID_RESPONSE"]);
+
+/** 两个 Provider 各自的错误类型共享同一套 code 分类；这里只判断「是否本系统的 Provider 错误」。 */
+function providerError(error: unknown) {
+  if (error instanceof SeedanceError) return error;
+  if (error instanceof WanError) return error;
+  return null;
+}
 
 export function categorizeCreateError(error: unknown): VideoCreateErrorCategory {
-  if (error instanceof SeedanceError) {
-    if (CREATE_TIMEOUT_CODES.has(error.code)) return "timeout";
-    if (CREATE_UNAVAILABLE_CODES.has(error.code)) return "unavailable";
-    if (CREATE_NETWORK_CODES.has(error.code)) return "network";
-    if (CREATE_RATE_LIMIT_CODES.has(error.code)) return "rate_limited";
-    if (CREATE_AUTH_CODES.has(error.code)) return "auth";
-    if (CREATE_REJECTED_CODES.has(error.code)) return "rejected";
-    if (CREATE_INVALID_RESPONSE_CODES.has(error.code)) return "invalid_response";
-    return error.status >= 500 ? "unavailable" : "unknown";
+  const provider = providerError(error);
+  if (provider) {
+    if (CREATE_TIMEOUT_CODES.has(provider.code)) return "timeout";
+    if (CREATE_UNAVAILABLE_CODES.has(provider.code)) return "unavailable";
+    if (CREATE_NETWORK_CODES.has(provider.code)) return "network";
+    if (CREATE_RATE_LIMIT_CODES.has(provider.code)) return "rate_limited";
+    if (CREATE_AUTH_CODES.has(provider.code)) return "auth";
+    if (CREATE_REJECTED_CODES.has(provider.code)) return "rejected";
+    if (CREATE_INVALID_RESPONSE_CODES.has(provider.code)) return "invalid_response";
+    return provider.status >= 500 ? "unavailable" : "unknown";
   }
-  // fetch 在网络层抛错时是 TypeError，不是 SeedanceError。
+  // fetch 在网络层抛错时是 TypeError，不是 Provider 错误。
   if (error instanceof TypeError) return "network";
   if (error instanceof Error && error.name === "AbortError") return "timeout";
   return "unknown";
@@ -61,15 +70,16 @@ export function withRecoveryHint(message: string, category: VideoCreateErrorCate
 }
 
 /** 创建请求超时时给用户看的提示：明确指向恢复入口而不是「重试」。 */
-export const CREATE_TIMEOUT_USER_MESSAGE = `火山方舟响应超时。${RECOVERABLE_SUFFIX}`;
+export const CREATE_TIMEOUT_USER_MESSAGE = `生成服务响应超时。${RECOVERABLE_SUFFIX}`;
 
 export const CREATE_UNKNOWN_USER_MESSAGE = `视频任务创建未完成。${RECOVERABLE_SUFFIX}`;
 
 export function categorizePollError(error: unknown): VideoPollErrorCategory {
-  if (error instanceof SeedanceError) {
-    if (error.code === "ARK_TIMEOUT") return "timeout";
-    if (error.code === "ARK_UNREACHABLE") return "network";
-    if (error.status >= 500) return "unavailable";
+  const provider = providerError(error);
+  if (provider) {
+    if (provider.code.endsWith("_TIMEOUT")) return "timeout";
+    if (provider.code.endsWith("_UNREACHABLE")) return "network";
+    if (provider.status >= 500) return "unavailable";
     return "server";
   }
   if (error instanceof TypeError) return "network";

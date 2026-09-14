@@ -1,5 +1,6 @@
 // 相对路径 + 显式扩展名：项目测试脚本直接用 Node 运行，没有 @/ 别名解析。
 import { SeedanceError } from "./seedance-mapping.ts";
+import { WanError } from "./wan-mapping.ts";
 
 /**
  * 错误文案收敛：只有 Provider 自己的错误已经是面向用户的中文说明。
@@ -10,8 +11,9 @@ import { SeedanceError } from "./seedance-mapping.ts";
 export function toUserMessage(error: unknown, fallback = "视频生成失败，请重试。") {
   if (error instanceof Error) {
     // 记录错误分类就够定位问题，不打印 message：message 可能带请求内容。
-    console.error("Video task error", { name: error.name, code: error instanceof SeedanceError ? error.code : "unknown" });
+    const code = error instanceof SeedanceError || error instanceof WanError ? error.code : "unknown";
+    console.error("Video task error", { name: error.name, code });
+    if (error instanceof SeedanceError || error instanceof WanError) return error.message;
   }
-  if (error instanceof SeedanceError) return error.message;
   return fallback;
 }

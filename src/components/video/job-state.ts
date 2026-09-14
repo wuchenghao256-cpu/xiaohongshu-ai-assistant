@@ -32,6 +32,11 @@ export type VideoJob = {
   status: VideoJobStatus | (string & {});
   progress: number;
   output_url?: string | null;
+  /**
+   * 播放地址，服务端已经按「Storage 签名地址 > Provider 临时地址」决定好。
+   * Provider 的 output_url 只有 24 小时有效，因此播放一律用它，不要直接用 output_url。
+   */
+  playback_url?: string | null;
   error_message?: string | null;
   provider_status?: string | null;
   created_at: string;
@@ -39,6 +44,18 @@ export type VideoJob = {
   /** 本地推断：任务已入库但迟迟拿不到上游 task id，需要用户确认后再决定。 */
   recover?: boolean;
 };
+
+/**
+ * 实际交给 <video> 的地址。
+ *
+ * playback_url 在刷新后由服务端重新签名，因此历史视频关闭浏览器再打开仍然可播；
+ * 只有服务端还没给出 playback_url 时（例如手动保存成功后只返回了 asset），
+ * 才回落到 output_url。已经保存过的任务即使临时地址过期也不会黑屏，
+ * 因为服务端一定会补上签名地址。
+ */
+export function videoSource(job: Pick<VideoJob, "playback_url" | "output_url">) {
+  return job.playback_url?.trim() || job.output_url?.trim() || null;
+}
 
 /** 只有这两个状态需要继续轮询。 */
 export function shouldKeepPolling(job: VideoJob) {

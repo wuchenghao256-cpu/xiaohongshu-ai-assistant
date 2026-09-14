@@ -12,14 +12,14 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { jobStatusLabel, markRecoverable, visibleJobs, type VideoJob } from "@/components/video/job-state";
+import { jobStatusLabel, markRecoverable, videoSource, visibleJobs, type VideoJob } from "@/components/video/job-state";
 import { useVideoJobs } from "@/components/video/use-video-jobs";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { MAX_REFERENCE_IMAGES, productCategories, productCategoryLabels, type ProductCategory } from "@/lib/video/types";
 
 type Mode = "image_to_video" | "product_ad" | "product_ugc";
-type Provider = "volcengine" | "runway";
+type Provider = "volcengine" | "runway" | "alibaba";
 type UploadItem = { path: string; name: string; preview: string };
 
 const modeCards = [
@@ -32,6 +32,8 @@ const durations = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const ratioLabels = { portrait: "竖屏 9:16", landscape: "横屏 16:9" };
 /** Seedance 2.0 fast 最高 720p；标准版支持 1080p。 */
 const resolutionsFor = (model: string) => (model.includes("fast") ? ["480p", "720p"] : ["720p", "1080p"]);
+/** Wan2.7 本轮固定 5 秒 720P：与 Provider 侧提交的参数一致，界面不提供可选值。 */
+const WAN_RESOLUTION = "720p";
 
 /**
  * 创建阶段的失败分类。超时 / 网关错误 / 断网时本地拿不到 upstream task id，
@@ -39,7 +41,7 @@ const resolutionsFor = (model: string) => (model.includes("fast") ? ["480p", "72
  * 提示用户用「重试」会直接再扣一次费。
  */
 function isUndeterminedCreateFailure(message: string) {
-  return /可能已在生成服务中创建|响应超时|创建未完成|无法连接火山方舟|暂时不可用/.test(message);
+  return /可能已在生成服务中创建|响应超时|创建未完成|无法连接|暂时不可用/.test(message);
 }
 
 export function VideoStudio({
@@ -48,12 +50,14 @@ export function VideoStudio({
   model,
   runwayModel,
   arkKeyReusable = false,
+  wanKeyMissing = false,
 }: {
   configured: boolean;
   provider: Provider | null;
   model: string;
   runwayModel: string;
   arkKeyReusable?: boolean;
+  wanKeyMissing?: boolean;
 }) {
   const [mode, setMode] = useState<Mode>("product_ad");
   const [uploads, setUploads] = useState<UploadItem[]>([]);
@@ -73,6 +77,7 @@ export function VideoStudio({
   // 同一轮提交复用同一个幂等令牌，提交结束后立即作废，允许用户再次尝试。
   const idempotencyKey = useRef<string | null>(null);
   const isArk = provider !== "runway";
+  const isWan = provider === "alibaba";
   const { jobs, setJobs, refreshing, fetchError, acting, refreshJobs, act } = useVideoJobs();
   const { visible, hidden } = useMemo(() => visibleJobs(jobs), [jobs]);
 
@@ -147,11 +152,13 @@ export function VideoStudio({
     idempotencyKey.current ??= crypto.randomUUID();
     try {
       const inputPaths = uploads.map((item) => item.path);
+      // Wan2.7 本轮不支持改画幅：i2v 的输出比例由首帧图决定，因此固定提交竖屏。
+      const submittedOrientation = isWan ? "portrait" : orientation;
       const body =
         mode === "image_to_video"
-          ? { kind: mode, inputPaths, prompt, duration, orientation, generateAudio, idempotencyKey: idempotencyKey.current }
+          ? { kind: mode, inputPaths, prompt, duration, orientation: submittedOrientation, generateAudio, idempotencyKey: idempotencyKey.current }
           : mode === "product_ad"
-            ? { kind: mode, inputPaths, productInfo, concept, duration, orientation, resolution, productCategory, generateAudio, idempotencyKey: idempotencyKey.current }
+            ? { kind: mode, inputPaths, productInfo, concept, duration, orientation: submittedOrientation, resolution, productCategory, generateAudio, idempotencyKey: idempotencyKey.current }
             : { kind: mode, inputPaths, productInfo, script: concept, duration, orientation: "portrait", productCategory, generateAudio, idempotencyKey: idempotencyKey.current };
       const response = await fetch("/api/video-jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await response.json().catch(() => ({})) as { job?: VideoJob; error?: string };
@@ -209,18 +216,33 @@ export function VideoStudio({
       ? "人物参考图 + 商品图（共 2 张）"
       : mode === "product_ad"
         ? `商品参考图（1–${MAX_REFERENCE_IMAGES} 张：正面、背面、Logo、材质、侧面、模特展示）`
-        : "起始图片";
+        : isWan
+          ? "首帧图片（1 张）"
+          : "起始图片";
   const selectedModel = isArk ? model : runwayModel;
+  /** 百炼首帧图直接决定输出比例，因此不能像 Seedance 那样由参数指定画幅。 */
+  const orientationLocked = isWan && mode !== "product_ugc";
+  const resolutionOptions = isWan ? [WAN_RESOLUTION] : isArk ? resolutionsFor(model) : ["720p", "1080p"];
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       {!configured ? (
         <Alert>
-          <AlertTitle>{arkKeyReusable ? "请启用豆包 Seedance 2.0" : "请先配置视频 Provider"}</AlertTitle>
+          <AlertTitle>
+            {isWan
+              ? "阿里云 Wan2.7 尚未就绪"
+              : arkKeyReusable
+                ? "请启用豆包 Seedance 2.0"
+                : "请先配置视频 Provider"}
+          </AlertTitle>
           <AlertDescription>
-            {arkKeyReusable
-              ? "已检测到 Seedream 的火山方舟 API Key。请在系统设置 → 视频模型 → 豆包 Seedance 2.0 中保存并启用，无需重复填写密钥。"
-              : "在系统设置 → 视频模型中保存并启用 API Key；密钥只在服务端使用。"}
+            {isWan
+              ? wanKeyMissing
+                ? "已在设置中启用阿里云 Wan，但服务端还没有 DASHSCOPE_API_KEY。请在部署环境配置该变量（连同 DASHSCOPE_WORKSPACE_ID、DASHSCOPE_REGION）后重新部署；密钥只存在于服务端。"
+                : "当前启用的是阿里云 Wan，但服务端凭据不可用。请检查系统设置 → 视频模型 → 阿里云 Wan 中的业务空间 ID 与部署环境的 DASHSCOPE_API_KEY。"
+              : arkKeyReusable
+                ? "已检测到 Seedream 的火山方舟 API Key。请在系统设置 → 视频模型 → 豆包 Seedance 2.0 中保存并启用，无需重复填写密钥。"
+                : "在系统设置 → 视频模型中保存并启用 API Key；密钥只在服务端使用。"}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -256,9 +278,11 @@ export function VideoStudio({
             <CardDescription>
               {!isArk
                 ? "参考图将通过私有 Storage 签名地址提交给 Runway。"
-                : mode === "product_ad"
-                  ? `按 [图1] 商品主体、[图2..n] 细节的顺序上传，Seedance 2.0 会按此顺序保持商品一致。当前模型：${selectedModel}`
-                  : `上传原图作为 Seedance 2.0 多模态参考，不做纯文本转换。当前模型：${selectedModel}`}
+                : isWan
+                  ? `首帧图会通过 Storage 签名地址提交给阿里云百炼（Wan2.7 图生视频）。当前模型：${selectedModel}；固定 5 秒、720P、不加水印。`
+                  : mode === "product_ad"
+                    ? `按 [图1] 商品主体、[图2..n] 细节的顺序上传，Seedance 2.0 会按此顺序保持商品一致。当前模型：${selectedModel}`
+                    : `上传原图作为 Seedance 2.0 多模态参考，不做纯文本转换。当前模型：${selectedModel}`}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-5">
@@ -335,7 +359,11 @@ export function VideoStudio({
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field>
                 <FieldLabel>时长</FieldLabel>
-                <Select value={String(duration)} onValueChange={(value) => value && setDuration(Number(value))}>
+                <Select
+                  value={String(duration)}
+                  onValueChange={(value) => value && setDuration(Number(value))}
+                  disabled={orientationLocked}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue>{`${duration} 秒`}</SelectValue>
                   </SelectTrigger>
@@ -350,7 +378,7 @@ export function VideoStudio({
               {mode !== "product_ugc" ? (
                 <Field>
                   <FieldLabel>画面</FieldLabel>
-                  <Select value={orientation} onValueChange={(value) => value && setOrientation(value as typeof orientation)}>
+                  <Select value={orientation} onValueChange={(value) => value && setOrientation(value as typeof orientation)} disabled={orientationLocked}>
                     <SelectTrigger className="w-full">
                       <SelectValue>{ratioLabels[orientation]}</SelectValue>
                     </SelectTrigger>
@@ -370,15 +398,22 @@ export function VideoStudio({
                       <SelectValue>{resolution}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      {(isArk ? resolutionsFor(model) : ["720p", "1080p"]).map((value) => (
+                      {resolutionOptions.map((value) => (
                         <SelectItem key={value} value={value}>{value}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {isWan ? <p className="text-xs text-muted-foreground">Wan2.7 本轮只提交 720P。</p> : null}
                 </Field>
               ) : null}
 
-              {isArk ? (
+              {isWan ? (
+                <p className="text-xs text-muted-foreground">
+                  商品类型与声音仅用于 Seedance 2.0：Wan2.7 图生视频不使用这两项参数。
+                </p>
+              ) : null}
+
+              {isArk && !isWan ? (
                 <Field>
                   <FieldLabel>商品类型</FieldLabel>
                   <Select value={productCategory} onValueChange={(value) => value && setProductCategory(value as ProductCategory)}>
@@ -394,7 +429,7 @@ export function VideoStudio({
                 </Field>
               ) : null}
 
-              {isArk ? (
+              {isArk && !isWan ? (
                 <Field>
                   <FieldLabel>生成声音</FieldLabel>
                   <Select value={generateAudio ? "on" : "off"} onValueChange={(value) => setGenerateAudio(value === "on")}>
@@ -410,13 +445,19 @@ export function VideoStudio({
               ) : null}
             </div>
 
+            {isWan && mode !== "product_ugc" ? (
+              <p className="text-xs text-muted-foreground">
+                阿里云 Wan2.7 本轮固定 5 秒、720P：时长与画面随首帧图确定，因此不可调整。
+              </p>
+            ) : null}
+
             {isArk ? (
               <p className="text-xs text-muted-foreground">
                 视频生成需要一定时间（通常数分钟）。点击后按钮会立即禁用，相同请求不会重复提交。
               </p>
             ) : null}
 
-            <Button type="button" size="lg" disabled={!configured || uploading || creating} onClick={() => void generate()}>
+                <Button type="button" size="lg" disabled={!configured || uploading || creating} onClick={() => void generate()}>
               {creating || uploading ? <Loader2 className="animate-spin" /> : <Sparkles />}
               {uploading ? "正在上传…" : creating ? "正在创建任务…" : "开始生成视频"}
             </Button>
@@ -471,8 +512,8 @@ export function VideoStudio({
                     {job.status === "never_accepted" ? (
                       <p className="mt-3 text-sm text-muted-foreground">{job.error_message ?? "该记录已关闭。"}</p>
                     ) : null}
-                    {job.status === "completed" && job.output_url ? (
-                      <video className="mt-4 aspect-video w-full rounded-md bg-black" src={job.output_url} controls playsInline />
+                    {job.status === "completed" && videoSource(job) ? (
+                      <video className="mt-4 aspect-video w-full rounded-md bg-black" src={videoSource(job)!} controls playsInline />
                     ) : null}
 
                     {job.recover && !recovering ? (
