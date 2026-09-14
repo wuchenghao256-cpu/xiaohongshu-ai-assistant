@@ -1,6 +1,7 @@
 import "server-only";
 import { withExponentialRetry } from "@/lib/jobs/orchestrator";
 import type { ProviderRuntimeConfig } from "@/lib/providers/types";
+import { MISSING_DASHSCOPE_API_KEY } from "@/lib/providers/types";
 import type { VideoJobInput } from "@/lib/video/types";
 import {
   buildWanRequestBody,
@@ -60,6 +61,12 @@ async function wanFetch(
   shouldRetry: (error: unknown) => boolean,
 ) {
   const base = resolveWanBaseUrl({ baseUrl: config.baseUrl, workspaceId: config.workspaceId, region: config.region });
+  // 凭据只来自服务端环境变量。缺失时在这里收口，避免把一个占位串当 Bearer 发出去、
+  // 再拿 401 把用户引到「密钥无效」那条错误的方向上。
+  const apiKey = config.apiKey?.trim();
+  if (!apiKey || apiKey === MISSING_DASHSCOPE_API_KEY) {
+    throw new WanError("服务端未配置 DASHSCOPE_API_KEY，请联系管理员在部署环境里补上后重试。", MISSING_DASHSCOPE_API_KEY, 503);
+  }
   return withExponentialRetry(async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -69,7 +76,7 @@ async function wanFetch(
         signal: controller.signal,
         cache: "no-store",
         headers: {
-          Authorization: `Bearer ${config.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
           ...init.headers,
         },

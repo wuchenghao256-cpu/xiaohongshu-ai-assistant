@@ -1,7 +1,8 @@
 import "server-only";
-import { getDashscopeEnv, hasDashscopeApiKey } from "@/lib/env";
+import { getDashscopeEnv } from "@/lib/env";
 import { decryptProviderSecret, encryptProviderSecret } from "@/lib/providers/crypto";
 import type { ProviderCategory, ProviderName, ProviderRuntimeConfig, SafeProviderConfig } from "@/lib/providers/types";
+import { MISSING_DASHSCOPE_API_KEY } from "@/lib/providers/types";
 import { pickProviderByPriority } from "@/lib/video/playback";
 import { resolveWanBaseUrl } from "@/lib/video/wan-mapping";
 import { createClient } from "@/lib/supabase/server";
@@ -84,11 +85,25 @@ export async function getEnabledProviderConfig(userId: string, category: Provide
   return row ? toRuntimeConfig(row) : null;
 }
 
+/**
+ * 阿里云百炼是唯一不从数据库取密钥的 Provider：它的配置行里那一列
+ * （历史遗留的密文、保存时写入的占位符、或空串）在**读取时**被完整绕过，
+ * 密钥只认服务端环境变量。
+ *
+ * 这里必须早返回。api_key_encrypted 是 NOT NULL，历史行里可能不是合法密文，
+ * 交给 decryptProviderSecret 会抛 INVALID_ENCRYPTED_PROVIDER_SECRET，
+ * 把一个完全可以工作的百炼配置判成 500。
+ */
+export function resolveRuntimeApiKey(provider: ProviderName, apiKeyEncrypted: string): string {
+  if (provider === "alibaba") return process.env.DASHSCOPE_API_KEY?.trim() || MISSING_DASHSCOPE_API_KEY;
+  return decryptProviderSecret(apiKeyEncrypted);
+}
+
 function toRuntimeConfig(row: ConfigRow): ProviderRuntimeConfig {
   return {
     provider: row.provider, model: row.model, qualityModel: row.quality_model ?? undefined,
     baseUrl: row.base_url || (ARK_PROVIDERS.includes(row.provider) ? DEFAULT_ARK_BASE_URL : row.base_url),
-    apiKey: resolveApiKey(row),
+    apiKey: resolveRuntimeApiKey(row.provider, row.api_key_encrypted),
     workspaceId: row.workspace_id ?? undefined,
     region: row.region ?? undefined,
   };
@@ -100,14 +115,15 @@ function toRuntimeConfig(row: ConfigRow): ProviderRuntimeConfig {
  *
  * 这里**不**因为缺少密钥就返回 null：禁用百炼并不等于「视频 Provider 未配置」，
  * 返回 null 会让任务列表停止轮询，把用户正在跑的任务晾在半路。
- * 缺少密钥时只留空 apiKey，真正的缺失由创建/刷新时的明确报错暴露。
+ * 缺少密钥由 resolveRuntimeApiKey 落成 MISSING_DASHSCOPE_API_KEY，再在创建任务时
+ * 被翻译成一句明确的用户提示。
  */
 export function withDashscopeEnv(config: ProviderRuntimeConfig): ProviderRuntimeConfig {
   if (config.provider !== "alibaba") return config;
   const env = getDashscopeEnv();
   return {
     ...config,
-    apiKey: env?.DASHSCOPE_API_KEY ?? "",
+    apiKey: process.env.DASHSCOPE_API_KEY?.trim() || MISSING_DASHSCOPE_API_KEY,
     workspaceId: config.workspaceId ?? env?.DASHSCOPE_WORKSPACE_ID,
     region: config.region ?? env?.DASHSCOPE_REGION ?? "cn-beijing",
   };
@@ -122,9 +138,19 @@ export async function getVideoProviderConfig(userId: string): Promise<ProviderRu
   return config ? withDashscopeEnv(config) : null;
 }
 
-/** 阿里云百炼是否真的可用：库里启用了，同时服务端确实配了密钥。 */
+/**
+ * 百炼的密钥是否真的就绪。
+ *
+ * 必须先排除 MISSING_DASHSCOPE_API_KEY 这个哨兵值：它就是那句「未配置」提示本身，
+ * 直接当布尔用只会确认它非空，反而把缺失判成就绪。
+ */
 export function isDashscopeReady(config: ProviderRuntimeConfig) {
-  return config.provider !== "alibaba" || Boolean(config.apiKey);
+  return config.provider !== "alibaba" || (Boolean(config.apiKey) && config.apiKey !== MISSING_DASHSCOPE_API_KEY);
+}
+
+/** 哨兵值不是密钥，别把它塞进 Authorization 头发出去。 */
+export function isMissingDashscopeKey(config: ProviderRuntimeConfig) {
+  return config.provider === "alibaba" && config.apiKey === MISSING_DASHSCOPE_API_KEY;
 }
 
 /** 已保存过 Seedream 的 Ark Key 时，视频 Provider 不需要用户再填一次密钥。 */
@@ -134,25 +160,23 @@ export async function hasReusableArkKey(userId: string): Promise<boolean> {
 }
 
 /**
- * 百炼密钥只来自服务端环境变量，因此它的配置行不需要密钥：
- * 留空时用环境变量占位，其它 Provider 维持原来的复用顺序。
+ * api_key_encrypted 为 NOT NULL，但阿里云百炼的密钥来自环境变量、不需要存在这一行里。
+ * 用占位符而非真实密钥满足约束：对百炼而言这一列在**读取时**被完整绕过
+ * （见 resolveRuntimeApiKey），因此占位符写什么都不会被解密。
+ * 刻意不写成 `env:DASHSCOPE_API_KEY` 那种像密文的东西，免得日后有人拿它去解密。
  */
-function resolveStoredSecret(userId: string, input: { category: ProviderCategory; provider: ProviderName }) {
-  if (input.provider === "alibaba") return hasDashscopeApiKey() ? "env:DASHSCOPE_API_KEY" : undefined;
-  return findArkKeyFor(userId, input);
-}
-
-/** api_key_encrypted 为 NOT NULL，因此每行都自带密钥；直接解密即可。 */
-function resolveApiKey(row: ConfigRow) {
-  return decryptProviderSecret(row.api_key_encrypted);
+function placeholderSecret(provider: ProviderName) {
+  return provider === "alibaba" ? "env-managed" : undefined;
 }
 
 /**
- * 保存时留空 API Key 的取值顺序：先复用该 Provider 自己已保存的密钥，
- * 再回退到火山方舟的其它入口（图片 Seedream ↔ 视频 Seedance 共用同一把 Ark Key）。
+ * 保存时的密钥取值顺序：显式填写的 > 该 Provider 自己的占位/存量密钥 >
+ * 火山方舟的其它入口（图片 Seedream ↔ 视频 Seedance 共用同一把 Ark Key）。
  * 顺序很关键：否则在一条记录上清空密钥会覆盖掉另一条已有的密钥。
  */
-async function findArkKeyFor(userId: string, input: { category: ProviderCategory; provider: ProviderName }) {
+async function findStoredSecretFor(userId: string, input: { category: ProviderCategory; provider: ProviderName }) {
+  const placeholder = placeholderSecret(input.provider);
+  if (placeholder) return placeholder;
   const own = await readRow(userId, [["category", input.category], ["provider", input.provider]]);
   if (own?.api_key_encrypted) return own.api_key_encrypted;
   if (!ARK_PROVIDERS.includes(input.provider)) return undefined;
@@ -165,11 +189,11 @@ async function findArkKeyFor(userId: string, input: { category: ProviderCategory
 
 /**
  * 保存配置。api_key_encrypted 是 NOT NULL，但阿里云百炼的密钥来自环境变量、
- * 不需要存在这一行里，因此用占位符而非真实密钥（解密只发生在火山方舟路径上）。
+ * 不需要存在这一行里，因此用占位符而非真实密钥（对百炼来说这一列读取时被完整绕过）。
  */
 export async function saveProviderConfig(userId: string, input: { category: ProviderCategory; provider: ProviderName; model: string; qualityModel?: string; baseUrl?: string; apiKey?: string; enabled: boolean; workspaceId?: string; region?: string }) {
   const service = await createClient();
-  const encrypted = input.apiKey ? encryptProviderSecret(input.apiKey) : await resolveStoredSecret(userId, input);
+  const encrypted = input.apiKey ? encryptProviderSecret(input.apiKey) : await findStoredSecretFor(userId, input);
   if (!encrypted) throw new Error("API_KEY_REQUIRED");
   // base_url 是 NOT NULL 且长度 8-500：百炼的地址由业务空间 ID 推导，落库成具体域名，
   // 这样这一行既满足约束，也留下了「当时用的是哪个 Endpoint」的证据。

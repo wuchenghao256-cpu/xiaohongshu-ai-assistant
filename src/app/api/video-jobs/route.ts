@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { jsonError } from "@/lib/http";
-import { getVideoProviderConfig } from "@/lib/providers/repository";
+import { getVideoProviderConfig, isMissingDashscopeKey } from "@/lib/providers/repository";
 import type { ProviderRuntimeConfig } from "@/lib/providers/types";
 import { requireUser } from "@/lib/supabase/auth";
 import { categorizeCreateError, CREATE_TIMEOUT_USER_MESSAGE, CREATE_UNKNOWN_USER_MESSAGE, mayHaveCreatedUpstream, withRecoveryHint } from "@/lib/video/error-category";
@@ -89,9 +89,9 @@ async function startJob(userId: string, supabase: Supabase, input: VideoJobInput
   const config = await getVideoProviderConfig(userId);
   const provider = config?.provider ?? "volcengine";
   if (!config) return { error: notConfiguredMessage(provider) };
-  // 密钥为空只会出现在阿里云百炼这一条路径上（它的密钥不来自表单而是环境变量）。
-  // 提前拦下来，否则会把一个没有 Authorization 的请求发出去，再拿 401 误导用户去检查密钥。
-  if (!config.apiKey) return { error: "服务端未配置 DASHSCOPE_API_KEY，无法创建阿里云 Wan 任务。" };
+  // 百炼的密钥来自环境变量而不是表单。缺失时提前拦下，否则会把一个没有
+  // Authorization 的请求发出去，再拿 401 误导用户去检查密钥（而问题根本不在这里）。
+  if (isMissingDashscopeKey(config)) return { error: "服务端未配置 DASHSCOPE_API_KEY，无法创建阿里云 Wan 任务。" };
 
   // 先解析参考图地址再建行：这一步不产生 Provider 调用，失败时不必留下任务记录，
   // 也就能让用户直接重试，而不是被引导去走「恢复任务」。

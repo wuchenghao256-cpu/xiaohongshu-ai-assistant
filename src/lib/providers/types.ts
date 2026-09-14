@@ -37,6 +37,16 @@ export type ProviderRuntimeConfig = {
   region?: string;
 };
 
+/**
+ * 百炼密钥缺失时的哨兵值。
+ *
+ * 为什么不是一个空串：`ProviderRuntimeConfig.apiKey` 的类型是 string，用空串表达「未配置」
+ * 时，任何 `Boolean(apiKey)` 式的就绪判断都会把它当成「已配置」，缺失会被静默吞掉。
+ * 这个值本身不是密钥，因此**绝不能**被当成 Bearer 发出去或写进日志。
+ * 它是「配置缺失」这件事在运行期的表示，不是凭据本身。
+ */
+export const MISSING_DASHSCOPE_API_KEY = "MISSING_DASHSCOPE_API_KEY";
+
 export type SafeProviderConfig = Omit<ProviderRuntimeConfig, "apiKey"> & {
   id: string;
   category: ProviderCategory;
