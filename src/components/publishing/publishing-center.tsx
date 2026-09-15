@@ -186,7 +186,7 @@ export function PublishingCenter({
           const isManual = capability.mode === "manual_handoff";
           return <Card key={capability.platform} className={cn("transition-colors", selected && "border-primary/50 bg-accent/20")}>
             <CardHeader className="flex-row items-start gap-3">
-              <button type="button" role="checkbox" aria-checked={selected} aria-label={`选择${capability.label}`} onClick={() => togglePlatform(capability.platform)} className={cn("mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border transition-colors", selected ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background")}>
+              <button type="button" role="checkbox" aria-checked={selected} aria-label={`选择${capability.label}`} data-icon-button="" onClick={() => togglePlatform(capability.platform)} className={cn("mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border transition-colors", selected ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background")}>
                 {selected ? <Check className="size-3.5" /> : null}
               </button>
               <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", meta.tone)}><Icon className="size-4" /></div>

@@ -51,7 +51,7 @@ export default async function SettingsPage() {
       />
       <div className="mx-auto grid max-w-6xl gap-8 p-4 sm:p-8 lg:grid-cols-[180px_minmax(0,1fr)]">
         <nav
-          className="flex gap-1 overflow-x-auto lg:flex-col"
+          className="flex flex-wrap gap-1 lg:flex-col lg:flex-nowrap"
           aria-label="设置分区"
         >
           <a href="#general" className="settings-nav-link">

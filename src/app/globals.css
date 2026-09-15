@@ -192,10 +192,20 @@
   background: color-mix(in oklab, var(--primary) 22%, transparent);
 }
 
+/*
+ * 移动端点击区域。
+ *
+ * 只覆盖承载主要操作的控件。这里必须用选择器把图标按钮排除掉，光靠 @layer 没用：
+ * min-height 和 height 是两个属性，min-height 会把 height 顶大，所以哪怕把它放进
+ * @layer base，`size-5` 的按钮依然会被撑成 44px 高的竖条。早先的版本正是如此 ——
+ * 平台勾选框、弹窗关闭、删除参考图、API Key 眼睛全被拉长了。
+ *
+ * 同时去掉了 [role="button"]：它会命中卡片式选择项（角色是 radio 的模板卡、风格卡），
+ * 那些卡片本来就远高于 44px，拉高只会改变选中态的视觉范围。
+ */
 @media (max-width: 640px) {
-  button,
-  [role="button"],
-  input,
+  button:not([data-icon-button]),
+  input:not([type="checkbox"]):not([type="radio"]),
   select {
     min-height: 44px;
   }

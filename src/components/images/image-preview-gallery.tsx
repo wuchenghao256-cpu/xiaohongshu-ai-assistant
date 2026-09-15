@@ -50,7 +50,9 @@ export function ImagePreviewTrigger({
     className={cn("group/preview absolute inset-0 block cursor-zoom-in overflow-hidden text-left", className)}
   >
     <Image unoptimized fill sizes={sizes} src={image.src} alt={image.alt} className={cn("object-cover", imageClassName)} />
-    <span className="pointer-events-none absolute left-1 top-1 flex size-7 items-center justify-center rounded-md bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover/preview:opacity-100 group-focus-visible/preview:opacity-100">
+    {/* 手机上 hover / focus-visible 都不触发，角标若只在 hover 显示就等于不存在。
+        因此移动端常驻可见，桌面端（sm:）才回到 hover 才浮现。 */}
+    <span className="pointer-events-none absolute left-1 top-1 flex size-7 items-center justify-center rounded-md bg-background/90 text-foreground shadow-sm transition-opacity sm:opacity-0 sm:group-hover/preview:opacity-100 sm:group-focus-visible/preview:opacity-100">
       <Expand className="size-3.5" />
     </span>
   </button>;
@@ -110,7 +112,7 @@ function ImagePreviewModal({
   >
     <div className="flex shrink-0 items-center justify-between gap-3">
       <span className="rounded-full bg-black/45 px-3 py-1.5 text-sm tabular-nums">{currentIndex + 1} / {images.length}</span>
-      <button ref={closeButtonRef} type="button" onClick={close} aria-label="关闭图片预览" className="flex size-10 items-center justify-center rounded-full bg-black/45 transition-colors hover:bg-black/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
+      <button ref={closeButtonRef} type="button" onClick={close} aria-label="关闭图片预览" data-icon-button="" className="flex size-10 items-center justify-center rounded-full bg-black/45 transition-colors hover:bg-black/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white">
         <X className="size-5" />
       </button>
     </div>

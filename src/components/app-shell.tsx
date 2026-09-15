@@ -210,9 +210,18 @@ export function AppShell({
         </Button>
       </header>
       {mobileOpen ? (
-        <aside className="fixed inset-y-0 left-0 z-30 flex w-72 max-w-[86vw] flex-col border-r bg-sidebar shadow-lg lg:hidden">
-          {navigation}
-        </aside>
+        <>
+          {/* 固定用黑色而不是 bg-foreground：遮罩在深色主题下会翻成白色。
+              项目目前没有挂 ThemeProvider，但颜色不该依赖这个前提。 */}
+          <div
+            className="fixed inset-0 z-20 bg-black/40 lg:hidden"
+            aria-hidden="true"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside className="fixed inset-y-0 left-0 z-30 flex w-72 max-w-[86vw] flex-col border-r bg-sidebar shadow-lg lg:hidden">
+            {navigation}
+          </aside>
+        </>
       ) : null}
       <main className="min-h-screen min-w-0 lg:pl-56">{children}</main>
     </div>

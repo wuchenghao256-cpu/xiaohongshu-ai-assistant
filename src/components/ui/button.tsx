@@ -39,15 +39,24 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * 图标按钮（size 为 icon / icon-xs / icon-sm / icon-lg）标上 data-icon-button，
+ * 让 globals.css 的移动端 min-height:44px 跳过它们 —— 那些按钮本身就是方形图标，
+ * 拉高只会变成竖条。判断依据是 size 值而不是类名，调用方传的 className 覆盖不了。
+ */
+const iconSizes = ["icon", "icon-xs", "icon-sm", "icon-lg"] as const
+
 function Button({
   className,
   variant = "default",
   size = "default",
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  const isIcon = iconSizes.includes(size as (typeof iconSizes)[number])
   return (
     <ButtonPrimitive
       data-slot="button"
+      data-icon-button={isIcon ? "" : undefined}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
