@@ -2,6 +2,7 @@
 
 import {
   Check,
+  Clapperboard,
   Copy,
   Download,
   Loader2,
@@ -10,6 +11,7 @@ import {
   Radio,
   Send,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ImagePreviewGallery, ImagePreviewTrigger, type PreviewImage } from "@/components/images/image-preview-gallery";
@@ -201,6 +203,10 @@ export function PublishingCenter({
               <div className="mt-4 flex flex-wrap gap-2">
                 {isManual ? <Button type="button" variant={selected ? "default" : "outline"} size="sm" onClick={() => { if (!selected) togglePlatform(capability.platform); }}>{capability.actionLabel}</Button> : <Button type="button" variant="outline" size="sm" disabled>{capability.actionLabel}</Button>}
                 {post && capability.platform === "xiaohongshu" ? <div className="w-full min-w-0 pt-1">
+                  {/* 小红书是唯一支持「视频 + 文案」一起准备的平台，因此单独给一个入口。 */}
+                  <Button nativeButton={false} variant="outline" size="sm" className="mb-2 w-full min-w-0" render={<Link href="/publishing/xiaohongshu" />}>
+                    <Clapperboard data-icon="inline-start" />视频发布助手
+                  </Button>
                   <XiaohongshuShareActions
                     key={`${post.id}:${post.selectedImageCount}`}
                     post={post}

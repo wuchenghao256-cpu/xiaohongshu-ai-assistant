@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Clapperboard, ImagePlay, Loader2, RefreshCw, RotateCcw, Save, Sparkles, Upload, UserRound, X } from "lucide-react";
+import { AlertTriangle, Clapperboard, Download, ImagePlay, Loader2, RefreshCw, RotateCcw, Save, Sparkles, Upload, UserRound, X } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { jobStatusLabel, markRecoverable, videoSource, visibleJobs, type VideoJob } from "@/components/video/job-state";
 import { useVideoJobs } from "@/components/video/use-video-jobs";
+import { fileNameFromDisposition, triggerDownload } from "@/lib/sharing/download-file";
+import { shareVideoFileName } from "@/lib/sharing/xiaohongshu-publish";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { MAX_REFERENCE_IMAGES, productCategories, productCategoryLabels, type ProductCategory } from "@/lib/video/types";
@@ -74,6 +76,8 @@ export function VideoStudio({
   const [recovering, setRecovering] = useState<string | null>(null);
   const [recoverTaskId, setRecoverTaskId] = useState("");
   const [showAll, setShowAll] = useState(false);
+  /** 正在下载的任务 id。按 id 记录，避免点一条任务的下载按钮时所有卡片一起转圈。 */
+  const [downloading, setDownloading] = useState<string | null>(null);
   // 同一轮提交复用同一个幂等令牌，提交结束后立即作废，允许用户再次尝试。
   const idempotencyKey = useRef<string | null>(null);
   const isArk = provider !== "runway";
@@ -211,6 +215,33 @@ export function VideoStudio({
     );
   }
 
+  /**
+   * 下载已生成的视频。
+   *
+   * 走同源服务端代理（/api/video-jobs/[id]/download），而不是把 <video> 上的播放地址
+   * 直接交给 `<a download>`：那是跨域且一小时过期的签名地址，跨域下 download 属性会被
+   * 浏览器忽略，过期后连点开都是 403 —— 这正是「只能在线播放、下载不了」的原因。
+   * 服务端会把视频转存成私有的永久文件再转发字节，因此这个按钮拿到的永远是完整文件。
+   */
+  async function downloadVideo(job: VideoJob) {
+    if (downloading) return;
+    setDownloading(job.id);
+    try {
+      const response = await fetch(`/api/video-jobs/${job.id}/download`, { cache: "no-store" });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? "视频下载失败，请稍后重试。");
+      }
+      const blob = await response.blob();
+      triggerDownload(blob, fileNameFromDisposition(response.headers.get("content-disposition"), shareVideoFileName(job.id)));
+      toast.success("视频已开始下载");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "视频下载失败，请稍后重试。");
+    } finally {
+      setDownloading(null);
+    }
+  }
+
   const uploadLabel =
     mode === "product_ugc"
       ? "人物参考图 + 商品图（共 2 张）"
@@ -225,7 +256,7 @@ export function VideoStudio({
   const resolutionOptions = isWan ? [WAN_RESOLUTION] : isArk ? resolutionsFor(model) : ["720p", "1080p"];
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
+    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       {!configured ? (
         <Alert>
           <AlertTitle>
@@ -565,6 +596,12 @@ export function VideoStudio({
                         {acting === `${job.id}:regenerate` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                         {acting === `${job.id}:regenerate` ? "处理中…" : "重新生成"}
                       </Button>
+                      {job.status === "completed" ? (
+                        <Button size="sm" variant="outline" disabled={downloading !== null} onClick={() => void downloadVideo(job)}>
+                          {downloading === job.id ? <Loader2 className="animate-spin" /> : <Download />}
+                          {downloading === job.id ? "下载中…" : "下载视频"}
+                        </Button>
+                      ) : null}
                       {job.status === "completed" && !job.saved ? (
                         <Button size="sm" disabled={acting !== null} onClick={() => void act(job, "save")}>
                           {acting === `${job.id}:save` ? <Loader2 className="animate-spin" /> : <Save />}
